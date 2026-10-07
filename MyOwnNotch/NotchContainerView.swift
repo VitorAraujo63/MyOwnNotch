@@ -138,6 +138,7 @@ struct CompactView: View {
                 case .crypto:        CryptoCompactView()
                 case .tray:          TrayCompactView()
                 case .agent:         AgentCompactView()
+                case .github:        GitHubCompactView()
                 default:             EmptyView()
                 }
             }
@@ -164,6 +165,7 @@ struct ExpandedView: View {
         (.agent, "sparkle"),
     ]
     let rightTabs: [(NotchModule, String)] = [
+        (.github, "arrow.triangle.branch"),
         (.tray, "tray.full.fill"),
         (.crypto, "chart.xyaxis.line"),
         (.terminal, "terminal.fill"),
@@ -211,6 +213,7 @@ struct ExpandedView: View {
                 case .timer:         TimerExpandedView()
                 case .tray:          TrayExpandedView()
                 case .agent:         AgentExpandedView()
+                case .github:        GitHubExpandedView()
                 default:             MediaExpandedView()
                 }
             }

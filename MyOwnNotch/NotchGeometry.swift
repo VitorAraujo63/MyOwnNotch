@@ -62,7 +62,7 @@ struct NotchMetrics: Equatable {
             if module == .terminal || module == .agent {
                 return CGSize(width: max(600, hardwareWidth + 380), height: hardwareHeight + Self.terminalContentHeight)
             }
-            return CGSize(width: max(540, hardwareWidth + 332), height: hardwareHeight + Self.expandedContentHeight)
+            return CGSize(width: max(580, hardwareWidth + 372), height: hardwareHeight + Self.expandedContentHeight)
         }
     }
 

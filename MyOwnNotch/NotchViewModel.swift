@@ -39,6 +39,7 @@ enum NotchModule: Equatable {
     case crypto
     case tray
     case agent
+    case github
 }
 
 // MARK: - CryptoCoin Struct
@@ -140,6 +141,8 @@ class NotchViewModel: ObservableObject {
     let terminal = TerminalSession()
     let agent = AgentSession()
     let spotify = SpotifyService()
+    let github = GitHubService()
+    private var githubForward: AnyCancellable?
     var mediaTrackURI = ""
 
     // Bandeja de arquivos
@@ -170,6 +173,7 @@ class NotchViewModel: ObservableObject {
 
     init() {
         loadTray()
+        githubForward = github.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         cryptoPoller = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
             .sink { [weak self] _ in self?.fetchCrypto() }
         startAudioBarsAnimation()
