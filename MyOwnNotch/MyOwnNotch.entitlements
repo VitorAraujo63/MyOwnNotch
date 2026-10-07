@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox DESATIVADO para permitir: janela flutuante acima da menu bar,
+         controle de AppleScript em outros apps (Spotify/Music), e leitura de bateria via IOKit -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!-- Permite que o app controle outros aplicativos via AppleScript -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- Acesso a notificações do usuário -->
+    <key>com.apple.security.get-task-allow</key>
+    <false/>
+</dict>
+</plist>

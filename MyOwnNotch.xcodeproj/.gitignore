@@ -1,0 +1,11 @@
+# Arquivos de usuário e estado do Xcode (não devem ir para o GitHub)
+*.xcuserdata/
+xcuserdata/
+DerivedData/
+
+# Arquivos temporários do macOS
+.DS_Store
+
+# Builds e dependências locais
+build/
+.build/
