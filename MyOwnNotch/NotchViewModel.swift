@@ -187,7 +187,7 @@ class NotchViewModel: ObservableObject {
     // MARK: - Notch State Control
 
     func expand(module: NotchModule) {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.65)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
             activeModule = module
             state = .expanded
         }

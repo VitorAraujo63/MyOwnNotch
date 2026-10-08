@@ -12,7 +12,7 @@ struct NotchContainerView: View {
     @EnvironmentObject var vm: NotchViewModel
     @State private var hasAppeared = false
 
-    private let islandSpring = Animation.spring(response: 0.4, dampingFraction: 0.78)
+    private let islandSpring = Animation.spring(response: 0.42, dampingFraction: 0.88)
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -28,6 +28,7 @@ struct NotchContainerView: View {
                 }
                 .animation(islandSpring, value: vm.state)
                 .animation(islandSpring, value: vm.mediaIsPlaying)
+                .animation(islandSpring, value: vm.activeModule)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // O notch físico gera safe area no topo; a ilha precisa ficar rente à borda da tela
@@ -66,14 +67,17 @@ struct NotchIslandView: View {
                 switch vm.state {
                 case .idle:     IdleView()
                 case .compact:  CompactView()
-                case .expanded: ExpandedView()
+                case .expanded:
+                    // Diagrama no tamanho final e deixa a forma animada só "revelar" o conteúdo,
+                    // em vez de reorganizar o layout (e o terminal) a cada quadro do crescimento
+                    ExpandedView()
+                        .frame(width: vm.islandSize.width, height: vm.islandSize.height, alignment: .top)
                 }
             }
             .clipShape(shape)
         }
         .opacity(isHiddenIdle ? 0 : 1)
-        .animation(.spring(response: 0.4, dampingFraction: 0.78), value: vm.state)
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: vm.activeModule)
+        .animation(.spring(response: 0.42, dampingFraction: 0.88), value: vm.state)
     }
 
     /// Em Macs sem notch não desenha uma pílula preta vazia quando ocioso.
@@ -221,14 +225,18 @@ struct ExpandedView: View {
             .padding(.horizontal, sidePadding + 4)
             .padding(.top, 4)
             .padding(.bottom, 16)
-            .transition(.opacity)
+            // Conteúdo antigo some rápido e o novo só aparece com a ilha já crescendo,
+            // senão ele surge no tamanho final dentro de uma ilha ainda pequena (efeito de "reabrir")
+            .transition(.asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.08)),
+                removal: .opacity.animation(.easeIn(duration: 0.08))))
             .id(vm.activeModule)
         }
     }
 
     private func tabButton(_ module: NotchModule, _ icon: String) -> some View {
         Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
                 vm.activeModule = module
             }
         } label: {

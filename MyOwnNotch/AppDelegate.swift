@@ -74,9 +74,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Frame da janela para o estado atual: ilha + margem transparente (sombra), centrada
     /// no topo da tela. A janela acompanha o tamanho da ilha para não bloquear cliques
     /// na menu bar ao redor.
-    private func windowFrame() -> NSRect? {
+    private func windowFrame(state: NotchState? = nil, mediaPlaying: Bool? = nil) -> NSRect? {
         guard let screen = targetScreen else { return nil }
-        let island = notchViewModel.islandSize
+        let vm = notchViewModel
+        let st = state ?? vm.state
+        // Expandido: a janela já nasce no maior tamanho (terminal) e não muda ao trocar de aba,
+        // assim o redimensionamento da janela nunca interfere na animação da ilha.
+        let island = vm.metrics.islandSize(for: st, mediaPlaying: mediaPlaying ?? vm.mediaIsPlaying,
+                                           module: st == .expanded ? .terminal : vm.activeModule)
         let pad = NotchMetrics.windowPadding
         let width = island.width + 2 * pad
         let height = island.height + pad
@@ -127,20 +132,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Inicialmente ignora cliques para não bloquear a tela quando idle
         notchWindow?.ignoresMouseEvents = true
 
-        // Cresce a janela antes da animação; encolhe só depois que ela termina
+        // Cresce a janela ANTES da animação (síncrono, no willSet); encolhe só depois que ela termina
         notchViewModel.$state
-            .combineLatest(notchViewModel.$mediaIsPlaying, notchViewModel.$activeModule)
+            .combineLatest(notchViewModel.$mediaIsPlaying)
             .removeDuplicates { $0 == $1 }
-            .sink { [weak self] _, _, _ in
-                guard let self else { return }
-                DispatchQueue.main.async {
-                    guard let target = self.windowFrame(), let window = self.notchWindow else { return }
-                    if target.width >= window.frame.width && target.height >= window.frame.height {
-                        self.applyWindowFrame()
-                    } else {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                            self?.applyWindowFrame()
-                        }
+            .sink { [weak self] newState, playing in
+                guard let self, let window = self.notchWindow,
+                      let target = self.windowFrame(state: newState, mediaPlaying: playing) else { return }
+                if target.width >= window.frame.width && target.height >= window.frame.height {
+                    if window.frame != target { window.setFrame(target, display: true, animate: false) }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        self?.applyWindowFrame()
                     }
                 }
             }
