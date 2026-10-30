@@ -13,9 +13,16 @@ struct MyOwnNotchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // A Settings scene opcional (pode ser expandida no futuro)
+        // A cena Settings existe só porque o App exige uma cena. O ⌘, padrão dela abriria uma
+        // janela vazia; o comando é substituído para abrir a mesma janela de Ajustes do menu.
         Settings {
             EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Ajustes…") { appDelegate.openSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }

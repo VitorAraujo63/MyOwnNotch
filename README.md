@@ -31,7 +31,12 @@ Roda como app de barra de menus, sem ícone no Dock, e flutua acima da menu bar.
 | 🔋 **Bateria** | Nível, estado de carga e detalhes de saúde (IOKit). Some em Macs sem bateria. |
 | 🌤 **Clima** | Temperatura, sensação térmica, umidade, vento, máx/mín e previsão de 3 dias, com busca por cidade ou local padrão nos Ajustes. |
 | 💻 **Terminal** | Shell de login real em PTY (SwiftTerm). A sessão continua viva ao trocar de aba. |
-| 🗂 **Bandeja de arquivos** | Solte arquivos no notch para guardá-los e arraste-os de volta para qualquer lugar. |
+| 🗂 **Bandeja de arquivos** | Solte arquivos no notch para guardá-los e arraste-os de volta para qualquer lugar. Botão **Comprimir (.zip)** na barra (todos os itens) e "Comprimir" no menu de contexto de cada item. |
+| 📋 **Clipboard** | Histórico da área de transferência (texto, links, cores, imagens e arquivos) só em memória, com busca, fixar, remover e arrastar de volta. Clique copia novamente; itens de gerenciadores de senha são ignorados. Desligável nos Ajustes. |
+| ☕ **Manter acordado** | Pílula na aba Bateria que impede o Mac de dormir; aparece nas asas do notch enquanto ativa. |
+| ⇪ **Caps Lock** | Indicador nas laterais do notch quando o Caps Lock está ligado (desligável nos Ajustes). |
+| 🪟 **Estilos de vidro** | Dynamic Glass (preto na câmera, derretendo em vidro), Liquid Glass e Preto, mais cor de destaque configurável. Fica sólido em Modo de Pouca Energia. |
+| 👆 **Swipe para pular faixa** | Dois dedos no trackpad sobre o notch recolhido: esquerda = próxima, direita = anterior (com música tocando). |
 | ✨ **Claude** | Converse com o Claude pelo CLI `claude` já instalado e logado (sem chave de API). Haiku, Sonnet ou Opus, com modo agente opcional. |
 | 📊 **Crypto / Cotações** | Bitcoin, dólar e euro em BRL com variação e minigráfico de 30 dias. |
 | 🐙 **GitHub** | Gráfico de contribuições público de um usuário (sem token): hoje, ano e sequência. |
@@ -39,7 +44,7 @@ Roda como app de barra de menus, sem ícone no Dock, e flutua acima da menu bar.
 | 📈 **Monitor do sistema** | CPU, RAM, GPU e armazenamento. Só atualiza enquanto a aba está visível. |
 | 🎥 **Indicador de câmera/mic** | Mostra nas laterais do notch quando câmera ou microfone estão em uso. Não captura nada e não pede permissão de câmera/mic. |
 | 🔊 **HUD de volume** | Barra de volume ao mudar o volume do sistema (desligável nos Ajustes). |
-| ✨ **Live Activities** | Atividades nas "asas" do notch recolhido, por prioridade: câmera/mic, timer terminando, reunião, timer, música, carregando. Clique para abrir o módulo. |
+| ✨ **Live Activities** | Atividades nas "asas" do notch recolhido, por prioridade: câmera/mic, timer terminando, reunião, Caps Lock, timer, música, carregando, manter acordado. Clique para abrir o módulo. |
 
 ## Atalhos
 
@@ -58,6 +63,7 @@ Roda como app de barra de menus, sem ícone no Dock, e flutua acima da menu bar.
 | `G` | GitHub |
 | `S` | Monitor do sistema |
 | `L` | Calendário |
+| `V` | Clipboard |
 | `Esc` | Recolher o notch |
 | `⌘,` | Ajustes |
 | `Q` | Sair |
@@ -70,11 +76,17 @@ Roda como app de barra de menus, sem ícone no Dock, e flutua acima da menu bar.
 | `⌘←` / `⌘→` | Aba anterior / próxima (desativado em Terminal, Claude, Clima e GitHub, onde é "início/fim da linha") |
 | `←` / `→` | Aba anterior / próxima (exceto nos módulos com campo de texto) |
 | Swipe horizontal (trackpad) | Aba anterior / próxima |
+
+### Com o notch recolhido
+
+| Gesto | Ação |
+| --- | --- |
+| Swipe horizontal de dois dedos sobre o notch | Próxima / faixa anterior (música tocando) |
 | `Esc` | Recolher (exceto em Terminal e Claude, que ficam abertos; use o ✕) |
 
 ## Ajustes
 
-Abra pelo menu (`⌘,`). Opções: abrir ao iniciar sessão (SMAppService), atividades ao vivo, HUD de volume, módulos visíveis (oculte o que não usa; se a aba ativa for ocultada o notch troca para a primeira visível), durações de foco/pausa e som do timer, local padrão do clima e calendário.
+Abra pelo menu (`⌘,`). Opções: abrir ao iniciar sessão (SMAppService), atividades ao vivo, Caps Lock no notch, histórico da área de transferência, swipe para pular faixa, HUD de volume, aparência (estilo de vidro, cor de destaque, sólido em pouca energia), módulos visíveis (oculte o que não usa; se a aba ativa for ocultada o notch troca para a primeira visível), durações de foco/pausa e som do timer, local padrão do clima e calendário.
 
 ## Permissões
 
@@ -135,6 +147,7 @@ MyOwnNotch/                    # app
 ├── SystemAudioVolume.swift    # Volume do sistema (CoreAudio)
 ├── AgentSession.swift         # Integração com o CLI do Claude
 ├── TerminalSession.swift      # Terminal em PTY (SwiftTerm)
+├── ClipboardViews.swift       # Histórico da área de transferência
 ├── *Views.swift               # Interface de cada módulo
 └── SharedComponents.swift     # Componentes de UI reutilizáveis
 MyOwnNotchTests/               # testes unitários (XCTest)

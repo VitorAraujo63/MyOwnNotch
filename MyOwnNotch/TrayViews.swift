@@ -34,7 +34,24 @@ struct TrayExpandedView: View {
                     .font(NotchFont.label.weight(.semibold))
                     .foregroundStyle(NotchTheme.textSecondary)
                 Spacer()
+                if vm.trayIsZipping {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                        .frame(width: 14, height: 14)
+                        .accessibilityLabel("Comprimindo")
+                }
                 if !vm.trayItems.isEmpty {
+                    Button { vm.zipTrayItems() } label: {
+                        Label("Comprimir (.zip)", systemImage: "doc.zipper")
+                            .font(NotchFont.caption.weight(.semibold))
+                            .foregroundStyle(NotchTheme.textSecondary)
+                            .padding(.horizontal, NotchTheme.Spacing.m).padding(.vertical, 3)
+                            .background(Capsule().fill(NotchTheme.fillSelected))
+                    }
+                    .buttonStyle(HoverPressStyle(pressedScale: 0.95))
+                    .disabled(vm.trayIsZipping)
+                    .accessibilityLabel("Comprimir todos os itens em .zip")
+                    .help("Compactar todos os itens da bandeja em um .zip")
+
                     Button { withAnimation(Motion.snappy) { vm.clearTray() } } label: {
                         Text("Limpar")
                             .font(NotchFont.caption.weight(.semibold))
@@ -46,6 +63,14 @@ struct TrayExpandedView: View {
                     .accessibilityLabel("Limpar bandeja")
                     .help("Remover todos os itens da bandeja")
                 }
+            }
+
+            if let err = vm.trayZipError {
+                Text(err)
+                    .font(NotchFont.caption)
+                    .foregroundStyle(Color.red.opacity(0.9))
+                    .lineLimit(1)
+                    .accessibilityLabel("Erro ao comprimir: \(err)")
             }
 
             ZStack {
@@ -141,6 +166,8 @@ struct TrayTile: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(item.url.resolvingSymlinksInPath().path, forType: .string)
             }
+            Button("Comprimir") { vm.zipTrayItems([item]) }
+                .disabled(vm.trayIsZipping || !item.exists)
             Divider()
             Button("Remover da bandeja") { vm.removeFromTray(item) }
         }

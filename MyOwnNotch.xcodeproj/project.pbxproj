@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A1B2C3D4E5F600000000A001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F600000000A003 /* SwiftTerm */; };
-
+/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		B1B2C3D4E5F6000000000011 /* PBXContainerItemProxy */ = {
@@ -117,14 +117,6 @@
 		};
 /* End PBXNativeTarget section */
 
-/* Begin PBXTargetDependency section */
-		B1B2C3D4E5F6000000000010 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 40B42E5D306B370100FC4FCC /* MyOwnNotch */;
-			targetProxy = B1B2C3D4E5F6000000000011 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
-
 /* Begin PBXProject section */
 		40B42E56306B370100FC4FCC /* Project object */ = {
 			isa = PBXProject;
@@ -185,6 +177,14 @@
 			);
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B1B2C3D4E5F6000000000010 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 40B42E5D306B370100FC4FCC /* MyOwnNotch */;
+			targetProxy = B1B2C3D4E5F6000000000011 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		40B42E67306B370200FC4FCC /* Debug configuration for PBXProject "MyOwnNotch" */ = {

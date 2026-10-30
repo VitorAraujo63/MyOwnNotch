@@ -20,6 +20,8 @@ extension LiveActivity {
         case .meeting:     return .teal
         case .media:       return .pink
         case .charging:    return .green
+        case .capsLock:    return Color(red: 1.0, green: 0.88, blue: 0.5)
+        case .stayAwake:   return Color(red: 1.0, green: 0.7, blue: 0.2)
         }
     }
 
@@ -30,6 +32,8 @@ extension LiveActivity {
         case .meeting:          return "calendar"
         case .media:            return "music.note"
         case .charging:         return "bolt.fill"
+        case .capsLock:         return "capslock.fill"
+        case .stayAwake:        return "cup.and.saucer.fill"
         }
     }
 
@@ -41,6 +45,8 @@ extension LiveActivity {
         case .meeting:          return "Reunião"
         case .media:            return "Mídia tocando"
         case .charging:         return "Carregando"
+        case .capsLock:         return "Caps Lock ligado"
+        case .stayAwake:        return "Mantendo o Mac acordado"
         }
     }
 }
@@ -74,8 +80,8 @@ struct LiveActivityLeading: View {
             }
             .frame(width: 18, height: 18)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-        case .charging:
-            Image(systemName: "bolt.fill")
+        case .charging, .capsLock, .stayAwake:
+            Image(systemName: activity.symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(activity.tint)
         }
@@ -128,6 +134,16 @@ struct LiveActivityTrailing: View {
             Text("\(vm.batteryLevel)%")
                 .font(.system(size: 11, weight: .semibold))
                 .monospacedDigit()
+                .foregroundStyle(activity.tint)
+                .lineLimit(1)
+        case .capsLock:
+            Text("Caps")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(activity.tint)
+                .lineLimit(1)
+        case .stayAwake:
+            Text("Acordado")
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(activity.tint)
                 .lineLimit(1)
         }

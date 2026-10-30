@@ -42,11 +42,12 @@ enum NotchModule: Equatable, Hashable {
     case agent
     case github
     case calendar
+    case clipboard
 
     /// Módulos que o usuário pode ocultar/exibir (exclui `.none` e o HUD de volume).
     static let userModules: [NotchModule] = [
         .media, .battery, .timer, .systemMonitor, .weather, .actions,
-        .crypto, .tray, .terminal, .agent, .github, .calendar
+        .crypto, .tray, .terminal, .agent, .github, .calendar, .clipboard
     ]
 }
 
@@ -232,6 +233,38 @@ class NotchViewModel: ObservableObject {
     let calendar = CalendarService()
     let privacy = PrivacyMonitor()
 
+    // Clipboard
+    let clipboard = ClipboardService()
+
+    // Toggles de sistema
+    private let stayAwakeAssertion = StayAwakeAssertion()
+    private let capsLockMonitor = CapsLockMonitor()
+    /// "Manter acordado" (IOPMAssertion). Não persistido: sempre desligado ao abrir o app.
+    @Published var stayAwake: Bool = false {
+        didSet {
+            guard oldValue != stayAwake else { return }
+            if stayAwake {
+                if !stayAwakeAssertion.acquire() { stayAwake = false; return }
+            } else {
+                stayAwakeAssertion.release()
+            }
+            recomputeLiveActivities()
+        }
+    }
+    @Published private(set) var capsLockOn: Bool = false {
+        didSet { if oldValue != capsLockOn { recomputeLiveActivities() } }
+    }
+    @Published private(set) var isLowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+    // Aparência (gravada pela tela de Ajustes via @AppStorage)
+    @Published var surfaceStyle: SurfaceStyle = .dynamicGlass
+    @Published var accentChoice: AccentChoice = .module
+    @Published var solidOnLowPower: Bool = true
+    var effectiveSurfaceStyle: SurfaceStyle { (solidOnLowPower && isLowPowerMode) ? .black : surfaceStyle }
+    var swipeToSkipTrack: Bool { defaults.object(forKey: SettingsKey.swipeToSkipTrack) as? Bool ?? true }
+
+    func toggleStayAwake() { stayAwake.toggle() }
+
     // Live activities
     @Published private(set) var liveActivities: [LiveActivity] = []
     var primaryLiveActivity: LiveActivity? { liveActivities.first }
@@ -247,6 +280,9 @@ class NotchViewModel: ObservableObject {
     // Bandeja de arquivos
     @Published var trayItems: [TrayItem] = []
     @Published var isDropTargeted: Bool = false
+    @Published private(set) var trayIsZipping: Bool = false
+    /// Mensagem do último erro ao compactar (nil = sem erro).
+    @Published private(set) var trayZipError: String?
     private let trayDefaultsKey = "trayPaths"
 
     // Timers
@@ -297,6 +333,7 @@ class NotchViewModel: ObservableObject {
     private static let barsAnimation = Animation.easeInOut(duration: 0.12)
 
     init() {
+        Self.cleanupZipLeftovers()
         loadTray()
         loadSettings()
 
@@ -306,10 +343,30 @@ class NotchViewModel: ObservableObject {
         startMediaPolling()
         calendar.start()
         privacy.start()
+        applyClipboardEnabled()
+        applyCapsLockSetting()
         fetchWeather()
         fetchCrypto()
         recomputeLiveActivities()
         updatePollingForVisibility()
+    }
+
+    private func applyClipboardEnabled() {
+        let enabled = defaults.object(forKey: SettingsKey.clipboardEnabled) as? Bool ?? true
+        if enabled && !isSystemAsleep { clipboard.start() } else { clipboard.stop() }
+    }
+
+    private var showCapsLockEnabled: Bool {
+        defaults.object(forKey: SettingsKey.showCapsLock) as? Bool ?? true
+    }
+
+    private func applyCapsLockSetting() {
+        if showCapsLockEnabled && !isSystemAsleep {
+            capsLockMonitor.start { [weak self] on in self?.capsLockOn = on }
+            capsLockOn = capsLockMonitor.isOn
+        } else {
+            capsLockMonitor.stop()
+        }
     }
 
     // MARK: - Ajustes persistidos
@@ -331,6 +388,16 @@ class NotchViewModel: ObservableObject {
         weatherLocation = defaults.string(forKey: SettingsKey.weatherLocation) ?? ""
         weatherSearchInput = weatherLocation
         hiddenModules = Self.readHiddenModules(defaults)
+        readAppearance()
+    }
+
+    private func readAppearance() {
+        let style = defaults.string(forKey: SettingsKey.surfaceStyle).flatMap(SurfaceStyle.init(rawValue:)) ?? .dynamicGlass
+        if style != surfaceStyle { surfaceStyle = style }
+        let accent = defaults.string(forKey: SettingsKey.accentChoice).flatMap(AccentChoice.init(rawValue:)) ?? .module
+        if accent != accentChoice { accentChoice = accent }
+        let solid = defaults.object(forKey: SettingsKey.solidOnLowPower) as? Bool ?? true
+        if solid != solidOnLowPower { solidOnLowPower = solid }
     }
 
     private static func readHiddenModules(_ defaults: UserDefaults) -> Set<NotchModule> {
@@ -378,8 +445,13 @@ class NotchViewModel: ObservableObject {
             weatherSearchInput = loc
             fetchWeather(location: loc)
         }
+        readAppearance()
+        applyClipboardEnabled()
+        if showCapsLockEnabled != (capsLockMonitorRunning) { applyCapsLockSetting() }
         recomputeLiveActivities()
     }
+
+    private var capsLockMonitorRunning: Bool { capsLockMonitor.isRunning }
 
     private var liveActivitiesEnabled: Bool {
         defaults.object(forKey: SettingsKey.showLiveActivities) as? Bool ?? true
@@ -409,7 +481,12 @@ class NotchViewModel: ObservableObject {
         // Modo de baixa energia
         NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.fetchBatteryInfo() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let low = ProcessInfo.processInfo.isLowPowerModeEnabled
+                if low != self.isLowPowerMode { self.isLowPowerMode = low }
+                self.fetchBatteryInfo()
+            }
             .store(in: &cancellables)
 
         // Sleep / wake
@@ -434,6 +511,8 @@ class NotchViewModel: ObservableObject {
         calendar.stop()
         privacy.stop()
         github.stop()
+        clipboard.stop()
+        capsLockMonitor.stop()
         updatePollingForVisibility()
     }
 
@@ -445,6 +524,8 @@ class NotchViewModel: ObservableObject {
         calendar.start()
         privacy.start()
         github.start()
+        applyClipboardEnabled()
+        applyCapsLockSetting()
         fetchBatteryInfo()
         fetchWeather()
         fetchCrypto()
@@ -549,6 +630,8 @@ class NotchViewModel: ObservableObject {
         var result: [LiveActivity] = []
         if liveActivitiesEnabled {
             if privacy.cameraInUse || privacy.micInUse { result.append(.privacy) }
+            if capsLockOn && showCapsLockEnabled { result.append(.capsLock) }
+            if stayAwake { result.append(.stayAwake) }
             if timerIsRunning {
                 result.append(timerSeconds < 60 ? .timerEnding : .timer)
             }
@@ -568,7 +651,8 @@ class NotchViewModel: ObservableObject {
 
     /// Expande no módulo da atividade primária; senão mídia (se houver player) ou o primeiro módulo visível.
     func openPrimaryActivity() {
-        if let primary = primaryLiveActivity {
+        // Atividades sem módulo (ex.: Caps Lock) são ignoradas: usa a próxima com módulo válido.
+        if let primary = liveActivities.first(where: { $0.module != .none }) {
             expand(module: primary.module)
         } else if !mediaSource.isEmpty, isModuleVisible(.media) {
             expand(module: .media)
@@ -1249,11 +1333,152 @@ class NotchViewModel: ObservableObject {
     func removeFromTray(_ item: TrayItem) {
         trayItems.removeAll { $0.id == item.id }
         saveTray()
+        Self.deleteIfInTrayZips(item.url)
     }
 
     func clearTray() {
+        let old = trayItems
         trayItems.removeAll()
         saveTray()
+        old.forEach { Self.deleteIfInTrayZips($0.url) }
+    }
+
+    nonisolated private static func trayZipsDir() -> URL? {
+        guard let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                         appropriateFor: nil, create: true) else { return nil }
+        return support.appendingPathComponent("MyOwnNotch/TrayZips", isDirectory: true)
+    }
+
+    /// Apaga do disco apenas arquivos que estejam dentro de TrayZips (nunca originais do usuário).
+    nonisolated private static func deleteIfInTrayZips(_ url: URL) {
+        guard let dir = trayZipsDir() else { return }
+        let base = dir.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        let file = url.resolvingSymlinksInPath().standardizedFileURL
+        if file.path.hasPrefix(base) { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Remove diretórios temporários órfãos "MyOwnNotchZip-*" e zips com mais de 7 dias.
+    nonisolated private static func cleanupZipLeftovers() {
+        let fm = FileManager.default
+        DispatchQueue.global(qos: .utility).async {
+            let tmp = fm.temporaryDirectory
+            for u in (try? fm.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+            where u.lastPathComponent.hasPrefix("MyOwnNotchZip-") {
+                try? fm.removeItem(at: u)
+            }
+            guard let dir = trayZipsDir() else { return }
+            let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+            let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            for f in files where f.pathExtension.lowercased() == "zip" {
+                let d = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                if let d, d < cutoff { try? fm.removeItem(at: f) }
+            }
+        }
+    }
+
+    /// Nome seguro para o zip: sem separadores, sem '.' inicial.
+    nonisolated static func sanitizedZipBaseName(_ raw: String) -> String {
+        var n = raw.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        while n.hasPrefix(".") { n.removeFirst() }
+        n = n.trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? "Arquivo" : n
+    }
+
+    /// Compacta os itens (ou a bandeja inteira) com /usr/bin/ditto e adiciona o .zip à bandeja.
+    /// Destino: ~/Library/Application Support/MyOwnNotch/TrayZips (nunca sobrescreve: "nome 2.zip"...).
+    /// Um item -> "<nome>.zip"; vários -> "Arquivo.zip" (copiados para dir temporário, que é zipado).
+    func zipTrayItems(_ items: [TrayItem]? = nil) {
+        guard !trayIsZipping else { return }
+        let urls = (items ?? trayItems).map { $0.url.resolvingSymlinksInPath() }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !urls.isEmpty else { return }
+        trayIsZipping = true
+        trayZipError = nil
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { Self.createZip(of: urls) }.value
+            guard let self else { return }
+            self.trayIsZipping = false
+            switch result {
+            case .success(let zip):
+                self.addToTray([zip])
+            case .failure(let error):
+                self.trayZipError = error.message
+            }
+        }
+    }
+
+    private struct ZipError: Error { let message: String }
+
+    nonisolated private static func createZip(of urls: [URL]) -> Result<URL, ZipError> {
+        let fm = FileManager.default
+        do {
+            let support = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            let outDir = support.appendingPathComponent("MyOwnNotch/TrayZips", isDirectory: true)
+            try fm.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+            let baseName = sanitizedZipBaseName(urls.count == 1 ? urls[0].lastPathComponent : "Arquivo")
+            let outPrefix = outDir.standardizedFileURL.path + "/"
+            var dest = outDir.appendingPathComponent(baseName + ".zip")
+            var n = 2
+            while fm.fileExists(atPath: dest.path) {
+                dest = outDir.appendingPathComponent("\(baseName) \(n).zip"); n += 1
+            }
+            guard dest.standardizedFileURL.path.hasPrefix(outPrefix) else {
+                return .failure(ZipError(message: "Nome de arquivo inválido"))
+            }
+
+            var source = urls[0]
+            var tempRoot: URL?
+            defer { if let tempRoot { try? fm.removeItem(at: tempRoot) } }
+            if urls.count > 1 {
+                let root = fm.temporaryDirectory.appendingPathComponent("MyOwnNotchZip-\(UUID().uuidString)", isDirectory: true)
+                let folder = root.appendingPathComponent(baseName, isDirectory: true)
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                tempRoot = root
+                for u in urls {
+                    let resolved = u.resolvingSymlinksInPath()
+                    guard fm.fileExists(atPath: resolved.path) else { continue }
+                    var target = folder.appendingPathComponent(sanitizedZipBaseName(u.lastPathComponent))
+                    var k = 2
+                    while fm.fileExists(atPath: target.path) {
+                        target = folder.appendingPathComponent("\(k)-" + u.lastPathComponent); k += 1
+                    }
+                    try fm.copyItem(at: resolved, to: target)
+                }
+                source = folder
+            }
+
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            p.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", source.path, dest.path]
+            let errPipe = Pipe()
+            p.standardError = errPipe
+            p.standardOutput = FileHandle.nullDevice
+            try p.run()
+            var timedOut = false
+            let lock = NSLock()
+            let killer = DispatchWorkItem {
+                lock.lock(); timedOut = true; lock.unlock()
+                if p.isRunning { p.terminate() }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 120, execute: killer)
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            killer.cancel()
+            lock.lock(); let didTimeOut = timedOut; lock.unlock()
+            if didTimeOut {
+                try? fm.removeItem(at: dest)
+                return .failure(ZipError(message: "Tempo esgotado ao comprimir"))
+            }
+            guard p.terminationStatus == 0 else {
+                try? fm.removeItem(at: dest)
+                let msg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return .failure(ZipError(message: msg.isEmpty ? "Falha ao compactar" : msg))
+            }
+            return .success(dest)
+        } catch {
+            return .failure(ZipError(message: error.localizedDescription))
+        }
     }
 
     /// Lê as URLs de arquivo dos providers de um drop.

@@ -123,6 +123,7 @@ struct BatteryExpandedView: View {
                         Text(t).font(.system(size: 11, weight: .medium)).foregroundColor(NotchTheme.textTertiary)
                     }
                     Spacer(minLength: 0)
+                    stayAwakePill
                 }
 
                 // Grade de métricas
@@ -147,6 +148,24 @@ struct BatteryExpandedView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Bateria")
         .accessibilityValue("\(vm.batteryLevel)%, \(statusText)")
+    }
+
+    /// Pílula "Manter acordado" (impede o Mac de dormir enquanto ligada).
+    private var stayAwakePill: some View {
+        let on = vm.stayAwake
+        let tint = Color(red: 1.0, green: 0.7, blue: 0.2)
+        return Button { withAnimation(Motion.snappy) { vm.toggleStayAwake() } } label: {
+            Label("Manter acordado", systemImage: "cup.and.saucer.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(on ? tint : NotchTheme.textTertiary)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(on ? tint.opacity(0.18) : NotchTheme.fillSubtle))
+        }
+        .buttonStyle(HoverPressStyle(pressedScale: 0.95))
+        .accessibilityLabel("Manter acordado")
+        .accessibilityValue(on ? "ligado" : "desligado")
+        .accessibilityAddTraits(.isToggle)
+        .help("Impede o Mac de dormir enquanto estiver ligado")
     }
 
     private var healthTint: Color {

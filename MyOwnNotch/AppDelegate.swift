@@ -58,6 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "🐙 GitHub", action: #selector(showGitHub), keyEquivalent: "g"))
         menu.addItem(NSMenuItem(title: "📈 Monitor do sistema", action: #selector(showSystemMonitor), keyEquivalent: "s"))
         menu.addItem(NSMenuItem(title: "📅 Calendário", action: #selector(showCalendar), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "📋 Clipboard", action: #selector(showClipboard), keyEquivalent: "v"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Recolher Notch", action: #selector(collapseNotch), keyEquivalent: "escape"))
         menu.addItem(NSMenuItem.separator())
@@ -91,12 +92,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showGitHub() { notchViewModel.expand(module: .github) }
     @objc private func showSystemMonitor() { notchViewModel.expand(module: .systemMonitor) }
     @objc private func showCalendar() { notchViewModel.expand(module: .calendar) }
+    @objc private func showClipboard() { notchViewModel.expand(module: .clipboard) }
 
     // MARK: - Ajustes
 
     private var settingsWindow: NSWindow?
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         if settingsWindow == nil {
             let controller = NSHostingController(rootView: SettingsView())
             let window = NSWindow(contentViewController: controller)
@@ -283,7 +285,91 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         lastDragChangeCount = pb.changeCount
     }
 
+    // MARK: - Swipe para pular faixa
+
+    private var globalScrollMonitor: Any?
+    private var localScrollMonitor: Any?
+    private var swipeAccumX: CGFloat = 0
+    private var swipeAccumY: CGFloat = 0
+    private var swipeHandled = false
+    /// Com música e swipe ligado, o hover espera um instante antes de expandir,
+    /// para dar tempo do swipe de dois dedos (que cancela a expansão).
+    private var pendingHoverExpand: DispatchWorkItem?
+    private static let hoverExpandDelay: TimeInterval = 0.3
+
+    /// Cache da preferência (o monitor global recebe todo scroll do sistema; não ler UserDefaults por evento).
+    private var swipeSettingEnabled = true
+    private func refreshSwipeSetting() {
+        swipeSettingEnabled = UserDefaults.standard.object(forKey: SettingsKey.swipeToSkipTrack) as? Bool ?? true
+    }
+
+    private var swipeToSkipEnabled: Bool {
+        swipeSettingEnabled && !notchViewModel.mediaSource.isEmpty
+    }
+
+    private func expandFromHover() {
+        pendingHoverExpand?.cancel(); pendingHoverExpand = nil
+        let vm = notchViewModel
+        guard vm.isHovered, vm.state == .idle || vm.state == .compact else { return }
+        vm.openPrimaryActivity()
+        if vm.state == .expanded {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
+    }
+    private static let swipeThreshold: CGFloat = 60
+
+    private func setupScrollTracking() {
+        refreshSwipeSetting()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshSwipeSetting() }
+            .store(in: &cancellables)
+        globalScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            self?.handleSwipe(event)
+        }
+        localScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            self?.handleSwipe(event)
+            return event
+        }
+    }
+
+    /// Dois dedos sobre o notch recolhido: esquerda = próxima faixa, direita = anterior.
+    /// Uma ação por gesto (reinicia no início da fase).
+    private func handleSwipe(_ event: NSEvent) {
+        // Saídas baratas primeiro: este handler roda para todo scroll do sistema
+        let vm = notchViewModel
+        guard vm.state == .idle || vm.state == .compact,
+              event.hasPreciseScrollingDeltas,
+              swipeSettingEnabled,
+              !vm.mediaSource.isEmpty else { return }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            swipeAccumX = 0; swipeAccumY = 0; swipeHandled = false
+        }
+        // Inércia não conta como novo gesto
+        guard event.momentumPhase.isEmpty, !swipeHandled else { return }
+
+        guard let screen = targetScreen,
+              notchHitRect(on: screen).contains(NSEvent.mouseLocation) else { return }
+
+        // Gesto em andamento sobre o notch: segura a expansão por hover até ele terminar
+        pendingHoverExpand?.cancel(); pendingHoverExpand = nil
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            if !swipeHandled { expandFromHover() }
+            return
+        }
+
+        swipeAccumX += event.scrollingDeltaX
+        swipeAccumY += event.scrollingDeltaY
+        guard abs(swipeAccumX) > Self.swipeThreshold, abs(swipeAccumX) > abs(swipeAccumY) * 1.5 else { return }
+
+        swipeHandled = true
+        if swipeAccumX < 0 { vm.mediaNext() } else { vm.mediaPrevious() }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        vm.showCompact(module: .media, duration: 2)
+    }
+
     private func setupMouseTracking() {
+        setupScrollTracking()
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseUp]
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.checkMousePosition(event.type)
@@ -299,26 +385,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let m = localMouseMonitor { NSEvent.removeMonitor(m) }
         globalMouseMonitor = nil
         localMouseMonitor = nil
+        if let m = globalScrollMonitor { NSEvent.removeMonitor(m) }
+        if let m = localScrollMonitor { NSEvent.removeMonitor(m) }
+        globalScrollMonitor = nil
+        localScrollMonitor = nil
         NotificationCenter.default.removeObserver(self)
         notchViewModel.terminal.terminate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
-    private func checkMousePosition(_ eventType: NSEvent.EventType = .mouseMoved) {
-        guard let screen = targetScreen, let window = notchWindow else { return }
-        let mouseLoc = NSEvent.mouseLocation
-
-        // Mesma geometria da ilha desenhada, centrada no topo da tela.
-        // Estende 2pt acima da borda: com o mouse colado no topo, y == maxY e
-        // NSRect.contains (intervalo aberto) falharia.
+    /// Mesma geometria da ilha desenhada, centrada no topo da tela.
+    /// Estende 2pt acima da borda: com o mouse colado no topo, y == maxY e
+    /// NSRect.contains (intervalo aberto) falharia.
+    private func notchHitRect(on screen: NSScreen) -> NSRect {
         let island = notchViewModel.islandSize
         let slop: CGFloat = notchViewModel.state == .idle ? 4 : 0
-        let notchRect = NSRect(
+        return NSRect(
             x: screen.frame.midX - island.width / 2 - slop,
             y: screen.frame.maxY - island.height,
             width: island.width + 2 * slop,
             height: island.height + 2 + slop
         )
+    }
+
+    private func checkMousePosition(_ eventType: NSEvent.EventType = .mouseMoved) {
+        guard let screen = targetScreen, let window = notchWindow else { return }
+        let mouseLoc = NSEvent.mouseLocation
+        let notchRect = notchHitRect(on: screen)
 
         let isHovering = notchRect.contains(mouseLoc)
 
@@ -343,12 +436,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             notchViewModel.isHovered = isHovering
             if isHovering {
                 if notchViewModel.state == .idle || notchViewModel.state == .compact {
-                    notchViewModel.openPrimaryActivity()
-                    if notchViewModel.state == .expanded {
-                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+                    if swipeToSkipEnabled && !isFileDragging {
+                        let work = DispatchWorkItem { [weak self] in self?.expandFromHover() }
+                        pendingHoverExpand?.cancel()
+                        pendingHoverExpand = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverExpandDelay, execute: work)
+                    } else {
+                        expandFromHover()
                     }
                 }
             } else {
+                pendingHoverExpand?.cancel(); pendingHoverExpand = nil
                 if notchViewModel.state == .expanded {
                     scheduleCollapse()
                 }

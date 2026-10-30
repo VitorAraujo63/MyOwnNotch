@@ -28,9 +28,11 @@ enum LiveActivity: Int, Comparable, CaseIterable, Identifiable {
     case privacy = 0   // câmera ou microfone em uso
     case timerEnding   // timer rodando com < 60 s
     case meeting       // reunião começando em até 10 min ou em andamento
+    case capsLock      // Caps Lock ligado
     case timer         // timer rodando
     case media         // música tocando
     case charging      // carregando
+    case stayAwake     // "Manter acordado" ativo (IOPMAssertion)
 
     var id: Int { rawValue }
     static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
@@ -43,6 +45,8 @@ enum LiveActivity: Int, Comparable, CaseIterable, Identifiable {
         case .meeting:              return .calendar
         case .media:                return .media
         case .charging:             return .battery
+        case .capsLock:             return .none     // só indicador; clique abre o módulo padrão
+        case .stayAwake:            return .battery
         }
     }
 }
@@ -75,6 +79,65 @@ enum SettingsKey {
     static let calendarEnabled    = "settings.calendarEnabled"     // Bool (padrão false, pede permissão)
     static let showMenuBarIcon    = "settings.showMenuBarIcon"     // Bool (padrão true)
     static let agentModeAcknowledged = "settings.agentModeAcknowledged" // Bool
+    // Identidade visual (estilo Droppy)
+    static let surfaceStyle       = "settings.surfaceStyle"        // String (SurfaceStyle.rawValue, padrão dynamicGlass)
+    static let accentChoice       = "settings.accentChoice"        // String (AccentChoice.rawValue, padrão module)
+    static let solidOnLowPower    = "settings.solidOnLowPower"     // Bool (padrão true)
+    // Novas features
+    static let clipboardEnabled   = "settings.clipboardEnabled"    // Bool (padrão true)
+    static let swipeToSkipTrack   = "settings.swipeToSkipTrack"    // Bool (padrão true) — swipe de 2 dedos no notch recolhido
+    static let showCapsLock       = "settings.showCapsLock"        // Bool (padrão true)
+}
+
+// MARK: - Aparência
+
+/// Material da ilha. `dynamicGlass`: preto na câmera derretendo em vidro; `liquidGlass`: vidro
+/// claro do topo ao fim; `black`: sólido (também usado automaticamente em Modo de Pouca Energia).
+enum SurfaceStyle: String, CaseIterable, Identifiable {
+    case dynamicGlass, liquidGlass, black
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .dynamicGlass: return "Dynamic Glass"
+        case .liquidGlass:  return "Liquid Glass"
+        case .black:        return "Preto"
+        }
+    }
+}
+
+/// Cor de destaque. `module` usa a cor de cada módulo (NotchTheme.accent(for:)).
+enum AccentChoice: String, CaseIterable, Identifiable {
+    case module, blue, purple, pink, orange, green, mint, white
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .module: return "Por módulo"
+        case .blue:   return "Azul"
+        case .purple: return "Roxo"
+        case .pink:   return "Rosa"
+        case .orange: return "Laranja"
+        case .green:  return "Verde"
+        case .mint:   return "Menta"
+        case .white:  return "Branco"
+        }
+    }
+}
+
+// MARK: - Clipboard
+
+/// Item do histórico da área de transferência. Mantido só em memória.
+struct ClipboardItem: Identifiable, Equatable {
+    enum Kind: Equatable { case text, link, color, image, file }
+    let id: UUID
+    let kind: Kind
+    /// Texto, URL, hex da cor ou caminho do arquivo (para .image pode ser nil).
+    let text: String?
+    /// PNG reduzido (thumbnail, máx. ~160 px) para `.image`.
+    let imagePNG: Data?
+    /// Nome do app de onde veio (frontmost no momento da cópia), se conhecido.
+    let sourceApp: String?
+    let date: Date
+    var isPinned: Bool
 }
 
 extension NotchModule {
@@ -95,6 +158,7 @@ extension NotchModule {
         case .agent: return "agent"
         case .github: return "github"
         case .calendar: return "calendar"
+        case .clipboard: return "clipboard"
         }
     }
 }

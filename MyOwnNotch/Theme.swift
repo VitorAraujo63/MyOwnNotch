@@ -76,8 +76,155 @@ enum NotchTheme {
         case .terminal:      return .mint
         case .timer:         return .red
         case .calendar:      return .teal
+        case .clipboard:     return .indigo
         case .none, .actions, .volume: return .white
         }
+    }
+}
+
+extension NotchTheme {
+    /// Cor de destaque efetiva para um módulo, respeitando a escolha do usuário.
+    static func accent(_ module: NotchModule, choice: AccentChoice) -> Color {
+        choice.color(for: module)
+    }
+
+    /// Tokens da superfície de vidro (estilo Droppy).
+    enum Surface {
+        /// Opacidade do preto no fundo da ilha expandida (Dynamic Glass).
+        static let dynamicBottomDarkness: Double = 0.42
+        /// Idem, para a faixa compacta (menor, precisa de mais contraste).
+        static let compactBottomDarkness: Double = 0.62
+        /// Escurecimento uniforme do Liquid Glass.
+        static let liquidDarkness: Double = 0.26
+        /// Intensidade da tinta da cor de destaque.
+        static let tintOpacity: Double = 0.12
+        static let strokeOpacity: Double = 0.14
+        static let strokeWidth: CGFloat = 1
+        /// Sombra externa suave quando expandido.
+        static let shadowOpacity: Double = 0.38
+        static let shadowRadius: CGFloat = 16
+        static let shadowY: CGFloat = 6
+    }
+}
+
+extension AccentChoice {
+    func color(for module: NotchModule) -> Color {
+        switch self {
+        case .module: return NotchTheme.accent(for: module)
+        case .blue:   return .blue
+        case .purple: return .purple
+        case .pink:   return .pink
+        case .orange: return .orange
+        case .green:  return .green
+        case .mint:   return .mint
+        case .white:  return .white
+        }
+    }
+}
+
+// MARK: - Superfície da ilha
+
+/// Material escuro atrás da janela (borra o desktop). Criado uma vez; sem atualizações por frame.
+private struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = .hudWindow
+        v.blendingMode = .behindWindow
+        v.state = .active
+        v.appearance = NSAppearance(named: .vibrantDark)
+        return v
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// Fundo da ilha: preto sólido ou vidro, conforme estilo e estado.
+/// Idle sempre preto (funde com o notch físico); a faixa `hardwareHeight` do topo fica preta
+/// fora do estado expandido. Reduce Transparency -> preto.
+struct NotchSurface<S: Shape>: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    let shape: S
+    let style: SurfaceStyle
+    let state: NotchState
+    let hardwareHeight: CGFloat
+    let tint: Color
+
+    private var isGlass: Bool {
+        !reduceTransparency && style != .black && state != .idle
+    }
+
+    var body: some View {
+        // O blur fica sempre montado (opacidade 0 fora do vidro) para não recriar a
+        // NSVisualEffectView a cada expand/collapse.
+        GeometryReader { geo in
+            let h = max(geo.size.height, 1)
+            let hw = min(hardwareHeight, h)
+            ZStack {
+                BehindWindowBlur()
+                    .clipShape(shape)
+                    .opacity(isGlass ? 1 : 0)
+                ZStack {
+                    tint.opacity(NotchTheme.Surface.tintOpacity)
+                    LinearGradient(stops: darkStops(h: h, hw: hw), startPoint: .top, endPoint: .bottom)
+                }
+                .drawingGroup()
+                .clipShape(shape)
+                .opacity(isGlass ? 1 : 0)
+                shape.fill(Color.black)
+                    .opacity(isGlass ? 0 : 1)
+                // Não é InsettableShape: o traço é centrado na borda e cortado pela forma,
+                // então a largura 2x resulta em 1pt visível por dentro.
+                shape.stroke(LinearGradient(stops: strokeStops(h: h, hw: hw),
+                                            startPoint: .top, endPoint: .bottom),
+                             lineWidth: NotchTheme.Surface.strokeWidth * 2)
+                    .clipShape(shape)
+                    .opacity(isGlass ? 1 : 0)
+            }
+        }
+        .background(shadowLayer)
+    }
+
+    private func darkStops(h: CGFloat, hw: CGFloat) -> [Gradient.Stop] {
+        let f = Double(hw / h)
+        switch style {
+        case .liquidGlass:
+            let d = NotchTheme.Surface.liquidDarkness
+            if state == .expanded {
+                // Preto curto no topo, depois vidro claro
+                let end = min(1, f * 0.8)
+                return [.init(color: .black, location: 0),
+                        .init(color: .black, location: end * 0.5),
+                        .init(color: .black.opacity(d), location: end),
+                        .init(color: .black.opacity(d), location: 1)]
+            }
+            return [.init(color: .black, location: 0),
+                    .init(color: .black, location: f),
+                    .init(color: .black.opacity(d + 0.2), location: min(1, f + 0.02)),
+                    .init(color: .black.opacity(d + 0.2), location: 1)]
+        default:
+            let bottom = state == .expanded ? NotchTheme.Surface.dynamicBottomDarkness
+                                            : NotchTheme.Surface.compactBottomDarkness
+            return [.init(color: .black, location: 0),
+                    .init(color: .black, location: f),
+                    .init(color: .black.opacity(bottom), location: 1)]
+        }
+    }
+
+    private func strokeStops(h: CGFloat, hw: CGFloat) -> [Gradient.Stop] {
+        let f = Double(hw / h)
+        let o = NotchTheme.Surface.strokeOpacity
+        // Sem borda na faixa preta do notch; a borda de vidro nasce abaixo dela
+        return [.init(color: .white.opacity(0), location: 0),
+                .init(color: .white.opacity(0), location: f * 0.9),
+                .init(color: .white.opacity(o + 0.04), location: min(1, f + 0.08)),
+                .init(color: .white.opacity(o * 0.6), location: 1)]
+    }
+
+    /// Sombra barata: um shape preto atrás, com sombra deslocada para baixo e opacidade animada.
+    private var shadowLayer: some View {
+        shape.fill(Color.black)
+            .shadow(color: .black.opacity(NotchTheme.Surface.shadowOpacity),
+                    radius: NotchTheme.Surface.shadowRadius, y: NotchTheme.Surface.shadowY)
+            .opacity(state == .expanded ? 1 : 0)
     }
 }
 

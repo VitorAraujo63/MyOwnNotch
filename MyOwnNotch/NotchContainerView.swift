@@ -84,10 +84,11 @@ struct NotchIslandView: View {
         let shape = NotchShape(topRadius: vm.metrics.topRadius(for: vm.state),
                                bottomRadius: vm.metrics.bottomRadius(for: vm.state))
         ZStack(alignment: .top) {
-            shape
-                .fill(Color.black)
-                .shadow(color: .black.opacity(vm.state == .expanded ? 0.55 : 0.0),
-                        radius: 12, y: 4)
+            NotchSurface(shape: shape,
+                         style: vm.effectiveSurfaceStyle,
+                         state: vm.state,
+                         hardwareHeight: vm.metrics.hardwareHeight,
+                         tint: vm.accentChoice.color(for: vm.activeModule))
 
             Group {
                 switch vm.state {
@@ -165,6 +166,7 @@ struct CompactView: View {
                 case .agent:         AgentCompactView()
                 case .github:        GitHubCompactView()
                 case .calendar:      CalendarCompactView()
+                case .clipboard:     ClipboardCompactView()
                 default:             EmptyView()
                 }
             }
@@ -185,6 +187,7 @@ struct ExpandedView: View {
     @Namespace private var tabNS
 
     /// Direção da última troca de aba (+1 = para a direita), usada no deslocamento do conteúdo.
+    @ObservedObject private var clipboardSearch = ClipboardSearchState.shared
     @State private var direction: CGFloat = 1
     @State private var swipeMonitor: Any?
     @State private var swipeAccum: CGFloat = 0
@@ -209,33 +212,41 @@ struct ExpandedView: View {
         Tab(module: .terminal, icon: "terminal.fill", title: "Terminal"),
         Tab(module: .timer, icon: "timer", title: "Timer"),
         Tab(module: .calendar, icon: "calendar", title: "Calendário"),
+        Tab(module: .clipboard, icon: "doc.on.clipboard", title: "Clipboard"),
     ]
 
     private var tabs: [Tab] { Self.allTabs.filter { vm.isModuleVisible($0.module) } }
 
     /// Módulos com campo de texto/terminal: teclas soltas (setas, Esc) pertencem a eles.
     private var ownsKeyboard: Bool {
-        [.terminal, .agent, .weather, .github].contains(vm.activeModule)
+        [.terminal, .agent, .weather, .github, .clipboard].contains(vm.activeModule)
     }
 
     var body: some View {
         let sidePadding = vm.metrics.topRadius(for: .expanded) + 14
         let all = tabs
-        let split = (all.count + 1) / 2
+        // O ✕ ocupa um slot no lado direito: a esquerda fica com a metade "maior"
+        let split = (all.count + 2) / 2
+        let slots = max(split, all.count - split + 1)
+        // Espaço de cada lateral fora do notch físico; botões encolhem se não couberem
+        let sideWidth = (vm.islandSize.width - 2 * sidePadding - vm.metrics.hardwareWidth) / 2 - 4
+        let spacing = NotchTheme.Spacing.xs
+        let fitted = (sideWidth - CGFloat(max(slots - 1, 0)) * spacing) / CGFloat(max(slots, 1))
+        let size = min(28, max(20, fitted.rounded(.down)))
 
         VStack(spacing: 0) {
             // ── Linha do notch: abas nas laterais, câmera no centro ──
             HStack(spacing: 0) {
                 HStack(spacing: NotchTheme.Spacing.xs) {
-                    ForEach(all.prefix(split), id: \.module) { tabButton($0) }
+                    ForEach(all.prefix(split), id: \.module) { tabButton($0, size: size) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Color.clear.frame(width: vm.metrics.hardwareWidth)
 
                 HStack(spacing: NotchTheme.Spacing.xs) {
-                    ForEach(all.dropFirst(split), id: \.module) { tabButton($0) }
-                    closeButton
+                    ForEach(all.dropFirst(split), id: \.module) { tabButton($0, size: size) }
+                    closeButton(size: size)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -256,6 +267,7 @@ struct ExpandedView: View {
                 case .agent:         AgentExpandedView()
                 case .github:        GitHubExpandedView()
                 case .calendar:      CalendarExpandedView()
+                case .clipboard:     ClipboardExpandedView()
                 default:             MediaExpandedView()
                 }
             }
@@ -279,18 +291,20 @@ struct ExpandedView: View {
 
     // MARK: Abas
 
-    private func tabButton(_ tab: Tab) -> some View {
+    private func tabButton(_ tab: Tab, size: CGFloat = 28) -> some View {
         let selected = vm.activeModule == tab.module
         return Button { select(tab.module) } label: {
             Image(systemName: tab.icon)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(selected ? NotchTheme.textPrimary : NotchTheme.textTertiary)
-                .frame(width: 28, height: 28)
+                .frame(width: size, height: size)
                 .background(
                     Group {
                         if selected {
                             Capsule()
                                 .fill(NotchTheme.fillSelected)
+                                .overlay(Capsule().fill(vm.accentChoice.color(for: tab.module).opacity(0.16)))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.5))
                                 .matchedGeometryEffect(id: "tab_bg", in: tabNS)
                         }
                     }
@@ -303,14 +317,14 @@ struct ExpandedView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var closeButton: some View {
+    private func closeButton(size: CGFloat = 28) -> some View {
         Button { vm.collapse() } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(NotchTheme.textTertiary)
-                .frame(width: 22, height: 22)
+                .frame(width: size - 6, height: size - 6)
                 .background(Circle().fill(NotchTheme.fillSubtle))
-                .frame(width: 28, height: 28)
+                .frame(width: size, height: size)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -356,7 +370,8 @@ struct ExpandedView: View {
             Button("") { step(1) }.keyboardShortcut(.rightArrow, modifiers: []).disabled(ownsKeyboard)
             Button("") { vm.collapse() }
                 .keyboardShortcut(.escape, modifiers: [])
-                .disabled(vm.activeModule == .terminal || vm.activeModule == .agent)
+                .disabled(vm.activeModule == .terminal || vm.activeModule == .agent
+                          || (vm.activeModule == .clipboard && !clipboardSearch.query.isEmpty))
         }
         .opacity(0)
         .frame(width: 0, height: 0)

@@ -120,9 +120,9 @@ final class GitHubTests: XCTestCase {
 
 final class ContractsTests: XCTestCase {
     func testLiveActivityPrioridade() {
-        let shuffled: [LiveActivity] = [.charging, .media, .timer, .privacy, .meeting, .timerEnding]
-        XCTAssertEqual(shuffled.sorted(), [.privacy, .timerEnding, .meeting, .timer, .media, .charging])
-        XCTAssertEqual(LiveActivity.allCases.count, 6)
+        let shuffled: [LiveActivity] = [.stayAwake, .charging, .media, .timer, .capsLock, .privacy, .meeting, .timerEnding]
+        XCTAssertEqual(shuffled.sorted(), [.privacy, .timerEnding, .meeting, .capsLock, .timer, .media, .charging, .stayAwake])
+        XCTAssertEqual(LiveActivity.allCases.count, 8)
     }
     func testLiveActivityModulo() {
         XCTAssertEqual(LiveActivity.timerEnding.module, .timer)
@@ -155,5 +155,41 @@ final class ViewModelHiddenModulesTests: XCTestCase {
         XCTAssertTrue(vm.isModuleVisible(.battery))
         vm.hiddenModules = Set(NotchModule.userModules)
         XCTAssertTrue(vm.visibleModules.isEmpty)
+    }
+}
+
+final class ClipboardDetectionTests: XCTestCase {
+    func testDetectaKinds() {
+        XCTAssertEqual(ClipboardService.detectKind("#FF8800"), .color)
+        XCTAssertEqual(ClipboardService.detectKind("https://example.com/a"), .link)
+        XCTAssertEqual(ClipboardService.detectKind("olá https://example.com"), .text)
+        XCTAssertEqual(ClipboardService.detectKind("ftp://example.com"), .text)
+        XCTAssertEqual(ClipboardService.detectKind("#GGGGGG"), .text)
+    }
+    func testOrdenacaoFixadosPrimeiro() {
+        let a = ClipboardItem(id: UUID(), kind: .text, text: "a", imagePNG: nil, sourceApp: nil, date: Date(timeIntervalSince1970: 1), isPinned: true)
+        let b = ClipboardItem(id: UUID(), kind: .text, text: "b", imagePNG: nil, sourceApp: nil, date: Date(timeIntervalSince1970: 2), isPinned: false)
+        XCTAssertEqual(ClipboardService.ordered([b, a]).map(\.text), ["a", "b"])
+    }
+
+    func testSecretHeuristic() {
+        XCTAssertTrue(ClipboardService.looksLikeSecret("ghp_abcdefghijklmnopqrstuvwxyz0123456789"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("github_pat_11ABCDEFG0abcdefghijklmnop"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("sk_live_51HabcdEFGH1234567890"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("AKIAIOSFODNN7EXAMPLE"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("xoxb-1234567890-abcdefghijkl"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV"))
+        XCTAssertTrue(ClipboardService.looksLikeSecret("aB3dE9gH2jK7mN4pQ8sT1vW6yZ0cF5hL"))
+        XCTAssertFalse(ClipboardService.looksLikeSecret("https://github.com/user/repo/pull/12345?diff=split&w=1"))
+        XCTAssertFalse(ClipboardService.looksLikeSecret("Olá, esta é uma frase normal com 123 números"))
+        XCTAssertFalse(ClipboardService.looksLikeSecret("sk-learn é uma biblioteca"))
+        XCTAssertFalse(ClipboardService.looksLikeSecret("/Users/fulano/Documents/relatorio-2024-final.pdf"))
+        XCTAssertFalse(ClipboardService.looksLikeSecret("hello"))
+    }
+
+    func testBlockedBundleCaseInsensitive() {
+        XCTAssertTrue(ClipboardService.isBlockedBundle("com.HickNHacksoftware.macpass"))
+        XCTAssertTrue(ClipboardService.isBlockedBundle("me.proton.pass.electron"))
+        XCTAssertFalse(ClipboardService.isBlockedBundle("com.apple.Safari"))
     }
 }
