@@ -34,19 +34,120 @@ final class AgentSession: ObservableObject {
     /// Modo agente: pode editar arquivos e rodar comandos (desligado = somente leitura/web)
     @Published var agentMode = false
     @Published private(set) var cliPath: String?
+    /// Estado da detecção do CLI (.loading / .loaded / .failed("não encontrado"))
+    @Published private(set) var cliStatus: LoadState = .loading
+    /// Diretório de trabalho do agente (padrão: AgentWorkspace dedicado, nunca a home)
+    @Published private(set) var workingDirectory: URL = AgentSession.defaultWorkspace()
+    /// Erro ao escolher o diretório (recusado); a UI mostra inline
+    @Published private(set) var directoryError: String?
+    /// Aviso informativo (ex.: configurações do projeto serão ignoradas)
+    @Published private(set) var directoryNotice: String?
+
+    private var cliTask: Task<Void, Never>?
 
     private var sessionId: String?
     private var process: Process?
     private var lineBuffer = Data()
     private var errorOutput = ""
 
-    init() { cliPath = Self.findCLI() }
+    private static let workDirKey = "agent.workingDirectory"
+
+    init() {
+        if let saved = UserDefaults.standard.string(forKey: Self.workDirKey) {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: saved, isDirectory: &isDir), isDir.boolValue,
+               Self.validationError(for: URL(fileURLWithPath: saved)) == nil {
+                workingDirectory = URL(fileURLWithPath: saved)
+            }
+        }
+        updateDirectoryNotice()
+        refreshCLI()
+    }
+
+    deinit { cliTask?.cancel() }
 
     var isAvailable: Bool { cliPath != nil }
 
+    /// Diretório dedicado: ~/Library/Application Support/MyOwnNotch/AgentWorkspace
+    nonisolated static func defaultWorkspace() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        let dir = base.appendingPathComponent("MyOwnNotch/AgentWorkspace", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Troca o diretório de trabalho (persistido). Retorna a mensagem de erro se recusado.
+    @discardableResult
+    func setWorkingDirectory(_ url: URL) -> String? {
+        var isDir: ObjCBool = false
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            let m = "Diretório inválido."
+            directoryError = m
+            return m
+        }
+        if let err = Self.validationError(for: url) {
+            directoryError = err
+            return err
+        }
+        directoryError = nil
+        workingDirectory = url.standardizedFileURL
+        UserDefaults.standard.set(workingDirectory.path, forKey: Self.workDirKey)
+        sessionId = nil   // contexto (--resume) pertence ao diretório anterior
+        updateDirectoryNotice()
+        return nil
+    }
+
+    /// Recusa `/`, a home e seus ancestrais, ~/Library e diretórios do sistema.
+    nonisolated static func validationError(for url: URL) -> String? {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().standardizedFileURL.path
+        if path == "/" || path == home || home.hasPrefix(path + "/") {
+            return "Diretório amplo demais (raiz, home ou ancestral da home). Escolha uma pasta de projeto."
+        }
+        if path == home + "/Library" {
+            return "A pasta Library não é permitida. Escolha uma pasta de projeto."
+        }
+        for bad in ["/System", "/Applications", "/usr", "/etc", "/private/etc", "/private/var/db", "/Library"] {
+            if path == bad || path.hasPrefix(bad + "/") {
+                return "Diretório do sistema não permitido (\(bad))."
+            }
+        }
+        return nil
+    }
+
+    private func updateDirectoryNotice() {
+        let fm = FileManager.default
+        let found = [".claude", ".mcp.json", ".git"].filter { fm.fileExists(atPath: workingDirectory.appendingPathComponent($0).path) }
+        directoryNotice = found.contains(".claude") || found.contains(".mcp.json")
+            ? "Configurações do projeto (.claude, .mcp.json) serão ignoradas por segurança."
+            : (found.contains(".git") ? "Repositório git: hooks e configurações locais não são usados pelo agente." : nil)
+    }
+
+    /// Volta ao diretório dedicado padrão.
+    func resetWorkingDirectory() {
+        UserDefaults.standard.removeObject(forKey: Self.workDirKey)
+        workingDirectory = Self.defaultWorkspace()
+        directoryError = nil
+        sessionId = nil
+        updateDirectoryNotice()
+    }
+
+    /// Re-detecta o CLI `claude` (fora da main thread).
+    func refreshCLI() {
+        cliTask?.cancel()
+        cliStatus = .loading
+        cliTask = Task { [weak self] in
+            let path = await Task.detached(priority: .utility) { Self.findCLI() }.value
+            guard !Task.isCancelled, let self else { return }
+            self.cliPath = path
+            self.cliStatus = path == nil ? .failed("não encontrado") : .loaded
+        }
+    }
+
     // MARK: - Localizar o CLI
 
-    private static func findCLI() -> String? {
+    nonisolated private static func findCLI() -> String? {
         let home = NSHomeDirectory()
         let candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
                           "\(home)/.claude/local/claude", "\(home)/.npm-global/bin/claude"]
@@ -90,21 +191,29 @@ final class AgentSession: ObservableObject {
         lineBuffer = Data()
         errorOutput = ""
 
+        // Nunca carrega settings/hooks/.mcp.json do projeto; só as configurações do usuário.
         var args = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                    "--model", model.rawValue]
+                    "--model", model.rawValue,
+                    "--setting-sources", "user", "--strict-mcp-config"]
         if let sessionId { args += ["--resume", sessionId] }
         if agentMode {
+            // Edição só dentro do cwd; sem git (config local pode executar código), sem web, sem Bash amplo.
             args += ["--permission-mode", "acceptEdits",
-                     "--allowedTools=Read,Write,Edit,Bash,Glob,Grep,WebSearch,WebFetch"]
+                     "--allowedTools", "Read(./**)", "Glob", "Grep", "Edit(./**)", "Bash(ls:*)",
+                     "--disallowedTools",
+                     "Edit(./.git/**)", "Edit(./.claude/**)", "Edit(./.mcp.json)"]   // Edit cobre Write/NotebookEdit
         } else {
-            args += ["--allowedTools=Read,Glob,Grep,WebSearch,WebFetch"]
+            // Glob/Grep não aceitam padrão de caminho; o CLI os restringe ao cwd/--add-dir.
+            args += ["--allowedTools", "Read(./**)", "Glob", "Grep"]
         }
         args += ["--", text]
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: cli)
         proc.arguments = args
-        proc.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+        let workDir = workingDirectory
+        try? FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        proc.currentDirectoryURL = workDir
         var env = ProcessInfo.processInfo.environment
         let extra = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin"
         env["PATH"] = extra + ":" + (env["PATH"] ?? "/usr/bin:/bin")

@@ -24,42 +24,47 @@ struct TrayExpandedView: View {
     @EnvironmentObject var vm: NotchViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: NotchTheme.Spacing.m) {
+            HStack(spacing: NotchTheme.Spacing.s) {
                 Image(systemName: "tray.full.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.cyan)
+                    .font(NotchFont.caption.weight(.semibold))
+                    .foregroundStyle(Color.cyan)
+                    .accessibilityHidden(true)
                 Text(vm.trayItems.isEmpty ? "Bandeja" : "Bandeja · \(vm.trayItems.count) \(vm.trayItems.count == 1 ? "item" : "itens")")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.8))
+                    .font(NotchFont.label.weight(.semibold))
+                    .foregroundStyle(NotchTheme.textSecondary)
                 Spacer()
                 if !vm.trayItems.isEmpty {
-                    Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { vm.clearTray() } } label: {
+                    Button { withAnimation(Motion.snappy) { vm.clearTray() } } label: {
                         Text("Limpar")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.6))
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                            .font(NotchFont.caption.weight(.semibold))
+                            .foregroundStyle(NotchTheme.textSecondary)
+                            .padding(.horizontal, NotchTheme.Spacing.m).padding(.vertical, 3)
+                            .background(Capsule().fill(NotchTheme.fillSelected))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPressStyle(pressedScale: 0.95))
+                    .accessibilityLabel("Limpar bandeja")
+                    .help("Remover todos os itens da bandeja")
                 }
             }
 
             ZStack {
                 if vm.trayItems.isEmpty {
-                    VStack(spacing: 6) {
-                        Image(systemName: "arrow.down.doc.fill")
+                    VStack(spacing: NotchTheme.Spacing.s) {
+                        Image(systemName: vm.isDropTargeted ? "arrow.down.circle.fill" : "arrow.down.doc.fill")
                             .font(.system(size: 22, weight: .light))
-                        Text("Solte arquivos aqui para guardá-los")
-                            .font(.system(size: 11, weight: .medium))
+                            .contentTransition(.symbolEffect(.replace))
+                            .accessibilityHidden(true)
+                        Text(vm.isDropTargeted ? "Solte para guardar" : "Solte arquivos aqui para guardá-los")
+                            .font(NotchFont.label.weight(.medium))
                         Text("Depois arraste para qualquer lugar")
-                            .font(.system(size: 9))
-                            .opacity(0.6)
+                            .font(NotchFont.caption)
                     }
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundStyle(vm.isDropTargeted ? Color.cyan : NotchTheme.textTertiary)
+                    .accessibilityElement(children: .combine)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: NotchTheme.Spacing.m) {
                             ForEach(vm.trayItems) { item in
                                 TrayTile(item: item)
                             }
@@ -70,15 +75,15 @@ struct TrayExpandedView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(vm.isDropTargeted ? Color.cyan.opacity(0.14) : Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous)
+                    .fill(vm.isDropTargeted ? Color.cyan.opacity(0.14) : NotchTheme.fillSubtle)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(vm.isDropTargeted ? Color.cyan : Color.white.opacity(0.14),
+                RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous)
+                    .strokeBorder(vm.isDropTargeted ? Color.cyan : NotchTheme.stroke,
                                   style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
             )
-            .animation(.easeOut(duration: 0.15), value: vm.isDropTargeted)
+            .motionAnimation(Motion.micro, value: vm.isDropTargeted)
         }
     }
 }
@@ -98,14 +103,17 @@ struct TrayTile: View {
                     .opacity(item.exists ? 1 : 0.35)
 
                 if hovering {
-                    Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { vm.removeFromTray(item) } } label: {
+                    Button { withAnimation(Motion.snappy) { vm.removeFromTray(item) } } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 7, weight: .black))
-                            .foregroundColor(.white)
+                            .foregroundStyle(NotchTheme.textPrimary)
                             .frame(width: 14, height: 14)
                             .background(Circle().fill(Color.black.opacity(0.75)).overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 0.5)))
+                            .frame(width: 22, height: 22).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HoverPressStyle())
+                    .accessibilityLabel("Remover \(item.name) da bandeja")
+                    .help("Remover da bandeja")
                     .offset(x: 5, y: -5)
                     .transition(.scale.combined(with: .opacity))
                 }
@@ -113,16 +121,16 @@ struct TrayTile: View {
             .frame(width: 52, height: 50)
 
             Text(item.name)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.8))
+                .font(NotchFont.caption.weight(.medium))
+                .foregroundStyle(NotchTheme.textSecondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .frame(width: 64)
         }
         .padding(.vertical, 6).padding(.horizontal, 4)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(hovering ? 0.1 : 0)))
+        .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.medium, style: .continuous).fill(hovering ? NotchTheme.fillSelected : Color.clear))
         .contentShape(Rectangle())
-        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
+        .onHover { h in withAnimation(Motion.micro) { hovering = h } }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
         // Arrastar para fora: entrega o arquivo real para o destino (Finder, Mail, apps…)
         .onDrag { NSItemProvider(object: item.url as NSURL) }
@@ -131,12 +139,17 @@ struct TrayTile: View {
             Button("Mostrar no Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Button("Copiar caminho") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(item.url.path, forType: .string)
+                NSPasteboard.general.setString(item.url.resolvingSymlinksInPath().path, forType: .string)
             }
             Divider()
             Button("Remover da bandeja") { vm.removeFromTray(item) }
         }
-        .help(item.url.path)
+        .help(item.url.resolvingSymlinksInPath().path)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(item.exists ? item.name : "\(item.name), arquivo não encontrado")
+        .accessibilityHint("Toque duas vezes para abrir. Use o menu de ações para mais opções.")
+        .accessibilityAction(named: "Abrir") { NSWorkspace.shared.open(item.url) }
+        .accessibilityAction(named: "Remover da bandeja") { vm.removeFromTray(item) }
     }
 }
 
@@ -148,7 +161,7 @@ struct TrayThumbnail: View {
         Image(nsImage: image ?? NSWorkspace.shared.icon(forFile: url.path))
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: NotchTheme.Radius.small, style: .continuous))
             .shadow(color: .black.opacity(0.4), radius: 3, y: 2)
             .task(id: url) {
                 let req = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 92, height: 92),
@@ -166,9 +179,9 @@ struct TrayCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "tray.full.fill").font(.system(size: 12)).foregroundColor(.cyan)
+            Image(systemName: "tray.full.fill").font(NotchFont.body).foregroundStyle(Color.cyan)
             Text("\(vm.trayItems.count) \(vm.trayItems.count == 1 ? "arquivo" : "arquivos")")
-                .font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
+                .font(NotchFont.body.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary)
         }
     }
 }

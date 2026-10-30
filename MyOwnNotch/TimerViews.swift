@@ -29,9 +29,10 @@ struct TimerCompactView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(vm.timerMode.tint)
             Text(vm.timerSeconds == 0 && !vm.timerIsRunning ? "Concluído!" : vm.timerDisplay)
+                .accessibilityLabel("Timer")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundColor(.white)
+                .foregroundStyle(NotchTheme.textPrimary)
                 .contentTransition(.numericText())
         }
     }
@@ -54,15 +55,18 @@ struct TimerExpandedView: View {
             // Modos
             HStack(spacing: 6) {
                 ForEach(TimerMode.allCases, id: \.self) { mode in
-                    Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { vm.setTimerMode(mode) } } label: {
+                    Button { withAnimation(Motion.snappy) { vm.setTimerMode(mode) } } label: {
                         Text(mode.rawValue)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(vm.timerMode == mode ? mode.tint : .white.opacity(0.45))
-                            .padding(.horizontal, 11).padding(.vertical, 3)
+                            .foregroundColor(vm.timerMode == mode ? mode.tint : NotchTheme.textTertiary)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
                             .background(Capsule().fill(vm.timerMode == mode ? mode.tint.opacity(0.2) : Color.white.opacity(0.08)))
                     }
                     .buttonStyle(.plain)
                     .opacity(vm.timerIsRunning && vm.timerMode != mode ? 0.4 : 1)
+                    .help("Modo \(mode.rawValue)")
+                    .accessibilityLabel("Modo \(mode.rawValue)")
+                    .accessibilityAddTraits(vm.timerMode == mode ? .isSelected : [])
                 }
             }
 
@@ -90,10 +94,12 @@ struct TimerExpandedView: View {
                         .background(Capsule().fill(tint.opacity(0.22)))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(primaryTitle == "Start Timer" ? "Iniciar timer" : primaryTitle)
 
                 circleButton(vm.timerSoundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                             label: vm.timerSoundEnabled ? "Desativar som do timer" : "Ativar som do timer",
                              active: vm.timerSoundEnabled) { vm.timerSoundEnabled.toggle() }
-                circleButton("arrow.counterclockwise", active: false) { vm.resetTimer() }
+                circleButton("arrow.counterclockwise", label: "Reiniciar timer", active: false) { vm.resetTimer() }
 
                 Spacer(minLength: 0)
 
@@ -103,20 +109,24 @@ struct TimerExpandedView: View {
                     .foregroundColor(tint)
                     .contentTransition(.numericText())
                     .shadow(color: tint.opacity(vm.timerIsRunning ? 0.45 : 0), radius: 8)
+                    .accessibilityLabel("Tempo restante")
+                    .accessibilityValue(vm.timerDisplay)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: vm.timerIsIdle)
+        .motionAnimation(.easeInOut(duration: 0.2), value: vm.timerIsIdle)
     }
 
-    private func circleButton(_ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+    private func circleButton(_ icon: String, label: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(active ? tint : .white.opacity(0.55))
+                .foregroundColor(active ? tint : NotchTheme.textTertiary)
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(Color.white.opacity(0.1)))
+                .background(Circle().fill(NotchTheme.fillSelected))
         }
         .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
@@ -183,7 +193,17 @@ struct TimerRuler: View {
             )
         }
         .onAppear { shown = Double(minutes) }
-        .onChange(of: minutes) { new in
+        .accessibilityElement()
+        .accessibilityLabel("Duração do timer")
+        .accessibilityValue("\(minutes) minutos")
+        .accessibilityAdjustableAction { dir in
+            switch dir {
+            case .increment: minutes = min(range.upperBound, minutes + 1)
+            case .decrement: minutes = max(range.lowerBound, minutes - 1)
+            @unknown default: break
+            }
+        }
+        .onChange(of: minutes) { _, new in
             if dragStart == nil { withAnimation(.easeOut(duration: 0.2)) { shown = Double(new) } }
         }
     }
@@ -222,6 +242,6 @@ struct TimerBurnBar: View {
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
             }
         }
-        .animation(.linear(duration: 1), value: remaining)
+        .motionAnimation(.linear(duration: 1), value: remaining)
     }
 }

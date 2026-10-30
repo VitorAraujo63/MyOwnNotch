@@ -13,17 +13,17 @@ struct MediaCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: NotchTheme.Spacing.m) {
             Image(systemName: vm.mediaIsPlaying ? "music.note" : "pause.fill")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.8))
+                .font(NotchFont.label.weight(.medium))
+                .foregroundStyle(NotchTheme.textSecondary)
                 .contentTransition(.symbolEffect(.replace))
 
             MarqueeText(text: vm.mediaTitle, font: .system(size: 11, weight: .medium), color: .white)
                 .frame(maxWidth: 140)
 
             if vm.mediaIsPlaying {
-                AudioBarsView(bars: vm.audioBars, color: .white.opacity(0.6), barWidth: 2.5, maxHeight: 12)
+                AudioBarsView(bars: vm.audioBars, color: NotchTheme.textTertiary, barWidth: 2.5, maxHeight: 12)
                     .frame(width: 22)
             }
         }
@@ -38,35 +38,47 @@ struct MediaExpandedView: View {
     @State private var panel: Panel?
 
     var body: some View {
-        if vm.mediaSource.isEmpty {
+        if vm.automationDenied {
+            StateView(kind: .noPermission,
+                      message: "Permita o controle do Spotify/Música",
+                      actionTitle: "Abrir Ajustes") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if vm.mediaSource.isEmpty {
             MediaEmptyView()
         } else if panel == .queue && vm.mediaSource == "Spotify" {
-            SpotifyPanelView(spotify: vm.spotify) { withAnimation(.easeOut(duration: 0.15)) { panel = nil } }
+            SpotifyPanelView(spotify: vm.spotify) { withAnimation(Motion.micro) { panel = nil } }
         } else if panel == .devices {
             DevicePanelView(spotify: vm.spotify,
-                            onClose: { withAnimation(.easeOut(duration: 0.15)) { panel = nil } },
-                            onConnect: { withAnimation(.easeOut(duration: 0.15)) { panel = .queue } })
+                            onClose: { withAnimation(Motion.micro) { panel = nil } },
+                            onConnect: { withAnimation(Motion.micro) { panel = .queue } })
         } else {
-            VStack(spacing: 8) {
+            VStack(spacing: NotchTheme.Spacing.m) {
                 // Capa + título + onda sonora
                 HStack(spacing: 12) {
                     AlbumArtView(artwork: vm.mediaArtwork, isPlaying: vm.mediaIsPlaying)
                         .frame(width: 58, height: 58)
                         .onTapGesture { vm.openMediaApp() }
+                        .accessibilityLabel("Capa do álbum")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { vm.openMediaApp() }
                         .help("Abrir \(vm.mediaSource == "Music" ? "Apple Music" : "Spotify")")
 
                     VStack(alignment: .leading, spacing: 2) {
                         MarqueeText(text: vm.mediaTitle,
-                                    font: .system(size: 14, weight: .bold), color: .white)
+                                    font: NotchFont.title.weight(.bold), color: .white)
                             .frame(height: 18)
                         Text(vm.mediaArtist.isEmpty ? "Artista desconhecido" : vm.mediaArtist)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
+                            .font(NotchFont.body.weight(.medium))
+                            .foregroundStyle(NotchTheme.textTertiary)
                             .lineLimit(1)
                         if !vm.mediaAlbum.isEmpty {
                             Text(vm.mediaAlbum)
-                                .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.3))
+                                .font(NotchFont.caption)
+                                .foregroundStyle(NotchTheme.textTertiary)
                                 .lineLimit(1)
                         }
                     }
@@ -83,26 +95,28 @@ struct MediaExpandedView: View {
                 // Controles
                 HStack(spacing: 0) {
                     if vm.mediaSource == "Spotify" {
-                        ToggleIcon(icon: "list.bullet", active: vm.spotify.isConnected) {
-                            withAnimation(.easeOut(duration: 0.15)) { panel = .queue }
+                        ToggleIcon(icon: "list.bullet", label: "Fila de reprodução", active: vm.spotify.isConnected) {
+                            withAnimation(Motion.micro) { panel = .queue }
                         }
                     }
-                    ToggleIcon(icon: "shuffle", active: vm.mediaShuffle) { vm.mediaToggleShuffle() }
+                    ToggleIcon(icon: "shuffle", label: vm.mediaShuffle ? "Desativar aleatório" : "Ativar aleatório", active: vm.mediaShuffle) { vm.mediaToggleShuffle() }
                     Spacer()
-                    MediaButton(icon: "backward.fill", size: 16) { vm.mediaPrevious() }
+                    MediaButton(icon: "backward.fill", label: "Anterior", size: 16) { vm.mediaPrevious() }
                     Spacer().frame(width: 26)
-                    MediaButton(icon: vm.mediaIsPlaying ? "pause.fill" : "play.fill", size: 22) { vm.mediaPlayPause() }
+                    MediaButton(icon: vm.mediaIsPlaying ? "pause.fill" : "play.fill", label: vm.mediaIsPlaying ? "Pausar" : "Reproduzir", size: 22) { vm.mediaPlayPause() }
                         .frame(width: 34, height: 34)
                     Spacer().frame(width: 26)
-                    MediaButton(icon: "forward.fill", size: 16) { vm.mediaNext() }
+                    MediaButton(icon: "forward.fill", label: "Próxima", size: 16) { vm.mediaNext() }
                     Spacer()
                     if vm.mediaSource == "Spotify" && vm.spotify.isConnected {
                         LikeButton(spotify: vm.spotify)
                     }
-                    ToggleIcon(icon: "laptopcomputer.and.iphone", active: false) {
-                        withAnimation(.easeOut(duration: 0.15)) { panel = .devices }
+                    ToggleIcon(icon: "laptopcomputer.and.iphone", label: "Dispositivos", active: false) {
+                        withAnimation(Motion.micro) { panel = .devices }
                     }
-                    ToggleIcon(icon: vm.mediaRepeat == .one ? "repeat.1" : "repeat", active: vm.mediaRepeat != .off) { vm.mediaCycleRepeat() }
+                    ToggleIcon(icon: vm.mediaRepeat == .one ? "repeat.1" : "repeat",
+                               label: vm.mediaRepeat == .off ? "Repetir: desligado" : (vm.mediaRepeat == .one ? "Repetir: faixa" : "Repetir: tudo"),
+                               active: vm.mediaRepeat != .off) { vm.mediaCycleRepeat() }
                 }
             }
         }
@@ -113,10 +127,15 @@ struct MediaExpandedView: View {
 struct MediaEmptyView: View {
     @EnvironmentObject var vm: NotchViewModel
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "music.note.list").font(.system(size: 26, weight: .light)).foregroundColor(.white.opacity(0.4))
-            Text("Nenhuma música tocando").font(.system(size: 12, weight: .medium)).foregroundColor(.white.opacity(0.6))
-            HStack(spacing: 8) {
+        VStack(spacing: NotchTheme.Spacing.l) {
+            Image(systemName: "music.note.list")
+                .font(.system(size: 26, weight: .light))
+                .foregroundStyle(NotchTheme.textTertiary)
+                .accessibilityHidden(true)
+            Text("Nenhuma música tocando")
+                .font(NotchFont.body.weight(.medium))
+                .foregroundStyle(NotchTheme.textSecondary)
+            HStack(spacing: NotchTheme.Spacing.m) {
                 openButton("Spotify", color: .green) { vm.openMediaApp("Spotify") }
                 openButton("Apple Music", color: .pink) { vm.openMediaApp("Music") }
             }
@@ -125,10 +144,33 @@ struct MediaEmptyView: View {
     }
     private func openButton(_ title: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text("Abrir \(title)").font(.system(size: 11, weight: .semibold)).foregroundColor(color)
+            Text("Abrir \(title)").font(NotchFont.label.weight(.semibold)).foregroundStyle(color)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Capsule().fill(color.opacity(0.15)))
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(HoverPressStyle())
+        .accessibilityLabel("Abrir \(title)")
+    }
+}
+
+/// Estilo de botão com hover (realce) e press (escala) para controles do notch.
+struct HoverPressStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.9
+    func makeBody(configuration: Configuration) -> some View {
+        HoverPressBody(configuration: configuration, pressedScale: pressedScale)
+    }
+    private struct HoverPressBody: View {
+        let configuration: Configuration
+        let pressedScale: CGFloat
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .brightness(hovering ? 0.15 : 0)
+                .scaleEffect(configuration.isPressed ? pressedScale : 1)
+                .motionAnimation(Motion.micro, value: configuration.isPressed)
+                .motionAnimation(Motion.micro, value: hovering)
+                .onHover { hovering = $0 }
+        }
     }
 }
 
@@ -138,26 +180,32 @@ struct LikeButton: View {
         Button { spotify.toggleLike() } label: {
             Image(systemName: spotify.apiError != nil ? "heart.slash" : (spotify.isLiked ? "heart.fill" : "heart"))
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(spotify.apiError != nil ? .orange : (spotify.isLiked ? .green : .white.opacity(0.4)))
+                .foregroundStyle(spotify.apiError != nil ? Color.orange : (spotify.isLiked ? Color.green : NotchTheme.textTertiary))
                 .frame(width: 30, height: 30).contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPressStyle())
+        .accessibilityLabel(spotify.isLiked ? "Remover das curtidas" : "Curtir")
         .help(spotify.apiError ?? (spotify.isLiked ? "Remover das curtidas" : "Curtir"))
     }
 }
 
 struct ToggleIcon: View {
     let icon: String
+    let label: String
     let active: Bool
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(active ? .green : .white.opacity(0.4))
+                .foregroundStyle(active ? Color.green : NotchTheme.textTertiary)
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(HoverPressStyle())
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .help(label)
     }
 }
 
@@ -171,13 +219,13 @@ struct MediaProgressBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: NotchTheme.Spacing.m) {
             Text(fmt(vm.mediaPosition))
                 .frame(width: 34, alignment: .trailing)
             GeometryReader { geo in
                 let progress = vm.mediaDuration > 0 ? CGFloat(vm.mediaPosition / vm.mediaDuration) : 0
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.18))
+                    Capsule().fill(NotchTheme.fillSelected)
                     Capsule().fill(Color.white.opacity(0.9))
                         .frame(width: max(0, geo.size.width * min(1, progress)))
                     Circle().fill(Color.white)
@@ -203,14 +251,22 @@ struct MediaProgressBar: View {
                         }
                 )
                 .onHover { hovering = $0 }
-                .animation(.easeOut(duration: 0.12), value: hovering)
+                .motionAnimation(Motion.micro, value: hovering)
             }
             .frame(height: 14)
+            .accessibilityElement()
+            .accessibilityLabel("Progresso da faixa")
+            .accessibilityValue("\(fmt(vm.mediaPosition)) de \(fmt(vm.mediaDuration))")
+            .accessibilityAdjustableAction { dir in
+                guard vm.mediaDuration > 0 else { return }
+                let delta = dir == .increment ? 10.0 : -10.0
+                vm.mediaSeek(to: min(vm.mediaDuration, max(0, vm.mediaPosition + delta)))
+            }
             Text("-" + fmt(vm.mediaDuration - vm.mediaPosition))
                 .frame(width: 38, alignment: .leading)
         }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .foregroundColor(.white.opacity(0.5))
+        .font(NotchFont.caption.weight(.medium).monospaced())
+        .foregroundStyle(NotchTheme.textTertiary)
     }
 }
 
@@ -219,6 +275,7 @@ struct MediaProgressBar: View {
 struct AlbumArtView: View {
     let artwork: NSImage?
     let isPlaying: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -226,7 +283,7 @@ struct AlbumArtView: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous))
             } else {
                 ZStack {
                     LinearGradient(
@@ -236,14 +293,14 @@ struct AlbumArtView: View {
                     )
                     Image(systemName: "music.note")
                         .font(.system(size: 24, weight: .light))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundStyle(NotchTheme.textTertiary)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous))
             }
         }
-        .scaleEffect(isPlaying ? 1.0 : 0.92)
+        .scaleEffect(isPlaying || reduceMotion ? 1.0 : 0.92)
         .shadow(color: .black.opacity(0.4), radius: 10, y: 5)
-        .animation(.spring(response: 0.5, dampingFraction: 0.65), value: isPlaying)
+        .motionAnimation(Motion.content, value: isPlaying)
     }
 }
 
@@ -251,23 +308,20 @@ struct AlbumArtView: View {
 
 struct MediaButton: View {
     let icon: String
+    let label: String
     let size: CGFloat
     let action: () -> Void
-    @State private var isPressed = false
 
     var body: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) { isPressed = true }
-            action()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                withAnimation { isPressed = false }
-            }
-        }) {
+        Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: size, weight: .medium))
-                .foregroundColor(.white)
-                .scaleEffect(isPressed ? 0.8 : 1.0)
+                .foregroundStyle(NotchTheme.textPrimary)
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverPressStyle(pressedScale: 0.8))
+        .accessibilityLabel(label)
+        .help(label)
     }
 }

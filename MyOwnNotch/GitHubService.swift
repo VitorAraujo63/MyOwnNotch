@@ -26,13 +26,34 @@ final class GitHubService: ObservableObject {
     @Published var errorMessage: String?
 
     private let defaultsKey = "githubUsername"
-    private var poller: AnyCancellable?
+    private var poller: Timer?
+    private(set) var lastFetch: Date?
 
     init() {
         username = UserDefaults.standard.string(forKey: defaultsKey) ?? ""
-        poller = Timer.publish(every: 600, on: .main, in: .common).autoconnect()
-            .sink { [weak self] _ in self?.refresh() }
-        refresh()
+        start()
+    }
+
+    /// Inicia o poll (10 min, com tolerance) e atualiza agora. Idempotente.
+    func start() {
+        guard poller == nil else { return }
+        let t = Timer(timeInterval: 600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        t.tolerance = 60
+        RunLoop.main.add(t, forMode: .common)
+        poller = t
+        refreshIfStale(maxAge: 600)
+    }
+
+    /// Pausa o poll (sleep).
+    func stop() {
+        poller?.invalidate()
+        poller = nil
+    }
+
+    func refreshIfStale(maxAge: TimeInterval) {
+        if lastFetch.map({ Date().timeIntervalSince($0) > maxAge }) ?? true { refresh() }
     }
 
     // MARK: - Derivados
@@ -77,13 +98,23 @@ final class GitHubService: ObservableObject {
         UserDefaults.standard.set(clean, forKey: defaultsKey)
         days = []
         errorMessage = nil
+        lastFetch = nil
         refresh()
     }
 
+    nonisolated static func isValidUsername(_ name: String) -> Bool {
+        name.range(of: #"^[A-Za-z0-9-]{1,39}$"#, options: .regularExpression) != nil
+    }
+
     func refresh() {
-        guard hasUsername,
-              let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://github.com/users/\(encoded)/contributions") else { return }
+        guard hasUsername else { return }
+        guard Self.isValidUsername(username),
+              let url = URL(string: "https://github.com/users/\(username)/contributions") else {
+            isLoading = false
+            days = []
+            errorMessage = "Usuário inválido"
+            return
+        }
         let requested = username
         isLoading = true
         var req = URLRequest(url: url)
@@ -97,10 +128,13 @@ final class GitHubService: ObservableObject {
                 self.isLoading = false
                 if status == 404 {
                     self.errorMessage = "Usuário não encontrado"
+                } else if status != 200 {
+                    self.errorMessage = status == 0 ? "Sem conexão com o GitHub" : "GitHub respondeu com erro (\(status))"
                 } else if parsed.isEmpty {
                     self.errorMessage = "Sem conexão com o GitHub"
                 } else {
                     self.errorMessage = nil
+                    self.lastFetch = Date()
                     self.days = parsed
                 }
             }
@@ -109,7 +143,7 @@ final class GitHubService: ObservableObject {
 
     // MARK: - Parse do HTML
 
-    nonisolated private static func parse(_ html: String) -> [GitHubDay] {
+    nonisolated static func parse(_ html: String) -> [GitHubDay] {
         // <td ... data-date="2026-01-04" id="contribution-day-component-0-0" data-level="2" ...>
         guard let cellRe = try? NSRegularExpression(pattern: #"data-date="(\d{4}-\d{2}-\d{2})"\s+id="([^"]+)"\s+data-level="(\d)""#),
               // <tool-tip ... for="contribution-day-component-0-0" ...>16 contributions on January 4th.

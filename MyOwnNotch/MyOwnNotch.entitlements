@@ -11,8 +11,8 @@
     <key>com.apple.security.automation.apple-events</key>
     <true/>
 
-    <!-- Acesso a notificações do usuário -->
-    <key>com.apple.security.get-task-allow</key>
-    <false/>
+    <!-- Leitura do calendário (próxima reunião) com Hardened Runtime -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
 </dict>
 </plist>

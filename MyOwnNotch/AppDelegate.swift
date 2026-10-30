@@ -20,8 +20,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UserDefaults.standard.register(defaults: [SettingsKey.showMenuBarIcon: true])
         setupMenuBar()
+        observeMenuBarIconVisibility()
         setupNotchWindow()
+    }
+
+    /// Com o ícone oculto, abrir o app de novo (Finder/Spotlight/Launchpad) leva aos Ajustes,
+    /// de onde o ícone pode ser reexibido.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
     }
 
     // MARK: - Menu Bar
@@ -46,11 +55,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "🗂 Bandeja de Arquivos", action: #selector(showTray), keyEquivalent: "f"))
         menu.addItem(NSMenuItem(title: "✨ Claude", action: #selector(showAgent), keyEquivalent: "c"))
         menu.addItem(NSMenuItem(title: "📊 Crypto", action: #selector(showCrypto), keyEquivalent: "k"))
+        menu.addItem(NSMenuItem(title: "🐙 GitHub", action: #selector(showGitHub), keyEquivalent: "g"))
+        menu.addItem(NSMenuItem(title: "📈 Monitor do sistema", action: #selector(showSystemMonitor), keyEquivalent: "s"))
+        menu.addItem(NSMenuItem(title: "📅 Calendário", action: #selector(showCalendar), keyEquivalent: "l"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Recolher Notch", action: #selector(collapseNotch), keyEquivalent: "escape"))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Ajustes…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Sair do MyOwnNotch", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
+        updateMenuBarIconVisibility()
+    }
+
+    private func observeMenuBarIconVisibility() {
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarIconVisibility() }
+            .store(in: &cancellables)
+    }
+
+    private func updateMenuBarIconVisibility() {
+        let visible = UserDefaults.standard.bool(forKey: SettingsKey.showMenuBarIcon)
+        if statusItem?.isVisible != visible { statusItem?.isVisible = visible }
     }
 
     @objc private func showMedia() { notchViewModel.expand(module: .media) }
@@ -61,6 +88,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showTray() { notchViewModel.expand(module: .tray) }
     @objc private func showAgent() { notchViewModel.expand(module: .agent) }
     @objc private func showCrypto() { notchViewModel.expand(module: .crypto) }
+    @objc private func showGitHub() { notchViewModel.expand(module: .github) }
+    @objc private func showSystemMonitor() { notchViewModel.expand(module: .systemMonitor) }
+    @objc private func showCalendar() { notchViewModel.expand(module: .calendar) }
+
+    // MARK: - Ajustes
+
+    private var settingsWindow: NSWindow?
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let controller = NSHostingController(rootView: SettingsView())
+            let window = NSWindow(contentViewController: controller)
+            window.title = "Ajustes"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
     @objc private func collapseNotch() { notchViewModel.collapse() }
     @objc private func quitApp() { NSApp.terminate(nil) }
 
@@ -69,18 +118,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     /// Tela onde o notch vive (prefere a com notch físico).
-    private var targetScreen: NSScreen? { NotchMetrics.preferredScreen() }
+    /// Estável: só é recalculada em mudanças de tela, wake e troca de Space.
+    private lazy var targetScreen: NSScreen? = NotchMetrics.preferredScreen()
 
     /// Frame da janela para o estado atual: ilha + margem transparente (sombra), centrada
     /// no topo da tela. A janela acompanha o tamanho da ilha para não bloquear cliques
     /// na menu bar ao redor.
-    private func windowFrame(state: NotchState? = nil, mediaPlaying: Bool? = nil) -> NSRect? {
+    private func windowFrame(state: NotchState? = nil, hasActivity: Bool? = nil) -> NSRect? {
         guard let screen = targetScreen else { return nil }
         let vm = notchViewModel
         let st = state ?? vm.state
         // Expandido: a janela já nasce no maior tamanho (terminal) e não muda ao trocar de aba,
         // assim o redimensionamento da janela nunca interfere na animação da ilha.
-        let island = vm.metrics.islandSize(for: st, mediaPlaying: mediaPlaying ?? vm.mediaIsPlaying,
+        let island = vm.metrics.islandSize(for: st, hasActivity: hasActivity ?? vm.hasLiveActivity,
                                            module: st == .expanded ? .terminal : vm.activeModule)
         let pad = NotchMetrics.windowPadding
         let width = island.width + 2 * pad
@@ -94,8 +144,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyWindowFrame(animated: Bool = false) {
+        updateHostingFrame()
         guard let frame = windowFrame(), let window = notchWindow, window.frame != frame else { return }
         window.setFrame(frame, display: true, animate: false)
+    }
+
+    /// Hosting view do SwiftUI: tamanho FIXO (maior frame possível da janela), centrado no
+    /// container e ancorado no topo. Assim o sistema de coordenadas do SwiftUI não muda quando a
+    /// janela cresce/encolhe e a ilha nasce sempre do mesmo ponto (o notch).
+    private var hostingView: NSView?
+    private var hostingContainer: NSView?
+
+    private func maxWindowSize() -> NSSize? {
+        let states: [(NotchState, Bool)] = [(.expanded, false), (.expanded, true), (.compact, true), (.idle, true)]
+        let frames = states.compactMap { windowFrame(state: $0.0, hasActivity: $0.1) }
+        guard !frames.isEmpty else { return nil }
+        return NSSize(width: frames.map(\.width).max() ?? 0, height: frames.map(\.height).max() ?? 0)
+    }
+
+    private func updateHostingFrame() {
+        guard let container = hostingContainer, let host = hostingView, let size = maxWindowSize() else { return }
+        let bounds = container.bounds
+        let target = NSRect(x: ((bounds.width - size.width) / 2).rounded(),
+                            y: bounds.height - size.height,
+                            width: size.width, height: size.height)
+        if host.frame != target { host.frame = target }
     }
 
     private func setupNotchWindow() {
@@ -111,19 +184,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let rootView = NotchContainerView().environmentObject(notchViewModel)
         let hostingView = NSHostingView(rootView: rootView)
+        self.hostingView = hostingView
         hostingView.sizingOptions = []   // a janela dita o tamanho, não o conteúdo
         // O hosting view fica dentro de um container simples (autoresizing, sem constraints),
         // senão o SwiftUI tenta mexer no tamanho da janela durante o layout e o AppKit aborta.
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
-        hostingView.frame = container.bounds
-        hostingView.autoresizingMask = [.width, .height]
+        container.wantsLayer = true
+        container.layer?.masksToBounds = true
+        hostingContainer = container
+        hostingView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         container.addSubview(hostingView)
+        updateHostingFrame()
 
         // Camada de drop POR CIMA do SwiftUI (o hosting view disputava o alvo do arrasto)
         let dropView = FileDropView(frame: container.bounds)
         dropView.autoresizingMask = [.width, .height]
         dropView.onTargeted = { [weak self] targeted in self?.notchViewModel.isDropTargeted = targeted }
-        dropView.onDrop = { [weak self] urls in self?.notchViewModel.addToTray(urls) }
+        dropView.onDrop = { [weak self] urls in
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+            self?.notchViewModel.addToTray(urls)
+        }
         container.addSubview(dropView)
         notchWindow?.contentView = container
         notchWindow?.setFrame(frame, display: true)
@@ -134,13 +214,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Cresce a janela ANTES da animação (síncrono, no willSet); encolhe só depois que ela termina
         notchViewModel.$state
-            .combineLatest(notchViewModel.$mediaIsPlaying)
+            .combineLatest(notchViewModel.$liveActivities.map { !$0.isEmpty })
             .removeDuplicates { $0 == $1 }
-            .sink { [weak self] newState, playing in
+            .sink { [weak self] newState, hasActivity in
                 guard let self, let window = self.notchWindow,
-                      let target = self.windowFrame(state: newState, mediaPlaying: playing) else { return }
+                      let target = self.windowFrame(state: newState, hasActivity: hasActivity) else { return }
                 if target.width >= window.frame.width && target.height >= window.frame.height {
-                    if window.frame != target { window.setFrame(target, display: true, animate: false) }
+                    if window.frame != target {
+                        window.setFrame(target, display: true, animate: false)
+                        self.updateHostingFrame()
+                    }
                 } else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                         self?.applyWindowFrame()
@@ -153,11 +236,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil
         )
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(self, selector: #selector(screensChanged),
+                       name: NSWorkspace.didWakeNotification, object: nil)
+        ws.addObserver(self, selector: #selector(screensChanged),
+                       name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
 
         setupMouseTracking()
     }
 
     @objc private func screensChanged() {
+        targetScreen = NotchMetrics.preferredScreen()
         notchViewModel.metrics = NotchMetrics.measure(targetScreen)
         applyWindowFrame()
     }
@@ -174,7 +263,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if self.notchViewModel.activeModule != .terminal && self.notchViewModel.activeModule != .agent { self.notchViewModel.collapse() }
         }
     }
-    private var mouseCheckTimer: Timer?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
     private var lastDragChangeCount = NSPasteboard(name: .drag).changeCount
     private var isFileDragging = false
 
@@ -194,12 +284,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupMouseTracking() {
-        mouseCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            self?.checkMousePosition()
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseUp]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.checkMousePosition(event.type)
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.checkMousePosition(event.type)
+            return event
         }
     }
 
-    private func checkMousePosition() {
+    func applicationWillTerminate(_ notification: Notification) {
+        if let m = globalMouseMonitor { NSEvent.removeMonitor(m) }
+        if let m = localMouseMonitor { NSEvent.removeMonitor(m) }
+        globalMouseMonitor = nil
+        localMouseMonitor = nil
+        NotificationCenter.default.removeObserver(self)
+        notchViewModel.terminal.terminate()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    private func checkMousePosition(_ eventType: NSEvent.EventType = .mouseMoved) {
         guard let screen = targetScreen, let window = notchWindow else { return }
         let mouseLoc = NSEvent.mouseLocation
 
@@ -220,7 +325,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Arrasto de arquivo em andamento: abre a bandeja ANTES de o mouse chegar ao topo,
         // para o drop cair dentro dela (e não na janela de trás ou na borda, que aciona o Mission Control).
         let wasDragging = isFileDragging
-        updateFileDragState()
+        if eventType == .leftMouseDragged || eventType == .leftMouseUp || wasDragging {
+            updateFileDragState()
+        }
         FileDropView.dragActive = isFileDragging
         if isFileDragging {
             if notchViewModel.state != .expanded || notchViewModel.activeModule != .tray {
@@ -236,8 +343,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             notchViewModel.isHovered = isHovering
             if isHovering {
                 if notchViewModel.state == .idle || notchViewModel.state == .compact {
-                    let m: NotchModule = !notchViewModel.mediaSource.isEmpty ? .media : .battery
-                    notchViewModel.expand(module: m)
+                    notchViewModel.openPrimaryActivity()
+                    if notchViewModel.state == .expanded {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+                    }
                 }
             } else {
                 if notchViewModel.state == .expanded {

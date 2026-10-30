@@ -21,9 +21,10 @@ struct NotchMetrics: Equatable {
 
     static let fallback = NotchMetrics(hardwareWidth: 200, hardwareHeight: 24, hasNotch: false)
 
-    /// Prefere a tela com notch; senão usa a tela principal.
+    /// Prefere a tela com notch; senão a tela da menu bar (`screens.first`).
+    /// Nunca usa `NSScreen.main`, que segue o foco do teclado.
     static func preferredScreen() -> NSScreen? {
-        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first
+        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.screens.first
     }
 
     static func measure(_ screen: NSScreen?) -> NotchMetrics {
@@ -42,27 +43,27 @@ struct NotchMetrics: Equatable {
 
     // MARK: Tamanho da ilha por estado
 
-    /// Largura de cada "asa" visível ao lado do notch quando há mídia tocando.
-    static let wingWidth: CGFloat = 38
+    /// Largura de cada "asa" visível ao lado do notch quando há uma Live Activity.
+    static let wingWidth: CGFloat = 46
     /// Altura da faixa de conteúdo abaixo do notch no estado compact.
     static let compactStripHeight: CGFloat = 32
     /// Altura da área de conteúdo no estado expanded (abaixo da linha do notch).
     static let expandedContentHeight: CGFloat = 150
     static let terminalContentHeight: CGFloat = 250
 
-    func islandSize(for state: NotchState, mediaPlaying: Bool, module: NotchModule = .none) -> CGSize {
+    func islandSize(for state: NotchState, hasActivity: Bool, module: NotchModule = .none) -> CGSize {
         switch state {
         case .idle:
-            let wings = (mediaPlaying ? 2 * Self.wingWidth : 0)
+            let wings = (hasActivity ? 2 * Self.wingWidth : 0)
             return CGSize(width: hardwareWidth + wings, height: hardwareHeight)
         case .compact:
             return CGSize(width: max(260, hardwareWidth + 60), height: hardwareHeight + Self.compactStripHeight)
         case .expanded:
             // Terminal ganha uma janela maior (~20% mais larga, bem mais alta)
             if module == .terminal || module == .agent {
-                return CGSize(width: max(600, hardwareWidth + 380), height: hardwareHeight + Self.terminalContentHeight)
+                return CGSize(width: max(660, hardwareWidth + 460), height: hardwareHeight + Self.terminalContentHeight)
             }
-            return CGSize(width: max(580, hardwareWidth + 372), height: hardwareHeight + Self.expandedContentHeight)
+            return CGSize(width: max(640, hardwareWidth + 440), height: hardwareHeight + Self.expandedContentHeight)
         }
     }
 

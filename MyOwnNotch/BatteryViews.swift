@@ -36,13 +36,18 @@ struct BatteryCompactView: View {
 
             Text("\(vm.batteryLevel)%")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundStyle(NotchTheme.textPrimary)
 
             if vm.batteryIsCharging {
-                Text("⚡")
-                    .font(.system(size: 9))
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(batteryColor)
+                    .accessibilityHidden(true)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Bateria")
+        .accessibilityValue("\(vm.batteryLevel)%\(vm.batteryIsCharging ? ", carregando" : "")")
     }
 }
 
@@ -78,7 +83,7 @@ struct BatteryExpandedView: View {
         HStack(spacing: 16) {
             // Anel de carga
             ZStack {
-                Circle().stroke(Color.white.opacity(0.08), lineWidth: 7)
+                Circle().stroke(NotchTheme.fillSubtle, lineWidth: 7)
                 Circle()
                     .trim(from: 0, to: CGFloat(vm.batteryLevel) / 100)
                     .stroke(AngularGradient(colors: [accent.opacity(0.55), accent], center: .center,
@@ -86,12 +91,12 @@ struct BatteryExpandedView: View {
                             style: StrokeStyle(lineWidth: 7, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: accent.opacity(0.4), radius: 5)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.8), value: vm.batteryLevel)
+                    .motionAnimation(.spring(response: 0.6, dampingFraction: 0.8), value: vm.batteryLevel)
                 VStack(spacing: 0) {
                     Text("\(vm.batteryLevel)")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
-                        .foregroundColor(.white).contentTransition(.numericText())
-                    Text("%").font(.system(size: 9, weight: .semibold)).foregroundColor(.white.opacity(0.45)).offset(y: -2)
+                        .foregroundStyle(NotchTheme.textPrimary).contentTransition(.numericText())
+                    Text("%").font(.system(size: 9, weight: .semibold)).foregroundColor(NotchTheme.textTertiary).offset(y: -2)
                 }
                 if d.isCharging {
                     Image(systemName: "bolt.fill").font(.system(size: 10, weight: .bold)).foregroundColor(accent)
@@ -115,7 +120,7 @@ struct BatteryExpandedView: View {
                             .background(Capsule().fill(Color.yellow.opacity(0.14)))
                     }
                     if let t = timeText {
-                        Text(t).font(.system(size: 11, weight: .medium)).foregroundColor(.white.opacity(0.6))
+                        Text(t).font(.system(size: 11, weight: .medium)).foregroundColor(NotchTheme.textTertiary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -139,6 +144,9 @@ struct BatteryExpandedView: View {
             }
         }
         .onAppear { vm.fetchBatteryInfo() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Bateria")
+        .accessibilityValue("\(vm.batteryLevel)%, \(statusText)")
     }
 
     private var healthTint: Color {
@@ -178,13 +186,13 @@ struct BatteryTile: View {
                 .background(Circle().fill(tint.opacity(0.16)))
             VStack(alignment: .leading, spacing: 0) {
                 Text(value).font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.white).lineLimit(1).minimumScaleFactor(0.7)
-                Text(label).font(.system(size: 8.5, weight: .medium)).foregroundColor(.white.opacity(0.4)).lineLimit(1)
+                    .foregroundStyle(NotchTheme.textPrimary).lineLimit(1).minimumScaleFactor(0.7)
+                Text(label).font(NotchFont.caption.weight(.medium)).foregroundColor(NotchTheme.textTertiary).lineLimit(1)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.medium, style: .continuous).fill(NotchTheme.fillSubtle))
     }
 }
 
@@ -193,6 +201,7 @@ struct BatteryTile: View {
 struct ChargingDot: View {
     let index: Int
     let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var opacity: Double = 0.3
 
     var body: some View {
@@ -201,6 +210,7 @@ struct ChargingDot: View {
             .frame(width: 5, height: 5)
             .opacity(opacity)
             .onAppear {
+                guard !reduceMotion else { opacity = 1.0; return }
                 withAnimation(
                     .easeInOut(duration: 0.6)
                     .repeatForever()

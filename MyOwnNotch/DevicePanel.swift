@@ -17,28 +17,32 @@ struct DevicePanelView: View {
     let onConnect: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: NotchTheme.Spacing.s) {
             // Cabeçalho + volume do player
-            HStack(spacing: 6) {
+            HStack(spacing: NotchTheme.Spacing.s) {
                 Button(action: onClose) {
-                    Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold)).foregroundColor(.white.opacity(0.6))
+                    Image(systemName: "chevron.left").font(NotchFont.caption.weight(.bold)).foregroundStyle(NotchTheme.textTertiary)
                         .frame(width: 22, height: 20).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                Text("Dispositivos").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
+                }
+                .buttonStyle(HoverPressStyle())
+                .accessibilityLabel("Voltar")
+                .help("Voltar")
+                Text("Dispositivos").font(NotchFont.label.weight(.semibold)).foregroundStyle(NotchTheme.textSecondary)
                 Spacer()
                 Image(systemName: vm.mediaVolume < 1 ? "speaker.slash.fill" : (vm.mediaVolume < 50 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
-                    .font(.system(size: 10)).foregroundColor(.white.opacity(0.5)).frame(width: 16)
+                    .font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary).frame(width: 16)
+                    .accessibilityHidden(true)
                 VolumeSlider(value: Binding(get: { vm.mediaVolume }, set: { vm.setMediaVolume($0) }))
                     .frame(width: 110, height: 14)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: NotchTheme.Spacing.l) {
                 column(title: "Saída do Mac") {
                     ForEach(audio.outputs) { out in
                         DeviceRow(icon: out.icon, title: out.name, subtitle: nil, active: out.isDefault) { audio.select(out) }
                     }
                 }
-                Rectangle().fill(Color.white.opacity(0.08)).frame(width: 0.5)
+                Rectangle().fill(NotchTheme.fillSubtle).frame(width: 0.5)
                 column(title: "Spotify Connect") { connectDevices }
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -52,19 +56,23 @@ struct DevicePanelView: View {
 
     @ViewBuilder private var connectDevices: some View {
         if !spotify.isConnected {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: NotchTheme.Spacing.s) {
                 Text("Entre no Spotify para trocar o dispositivo de reprodução (celular, caixas, outros PCs).")
-                    .font(.system(size: 9.5)).foregroundColor(.white.opacity(0.45)).fixedSize(horizontal: false, vertical: true)
+                    .font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary).fixedSize(horizontal: false, vertical: true)
                 Button(action: onConnect) {
-                    Text("Conectar").font(.system(size: 10, weight: .bold)).foregroundColor(.black)
+                    Text("Conectar").font(NotchFont.caption.weight(.bold)).foregroundStyle(Color.black)
                         .padding(.horizontal, 10).padding(.vertical, 4).background(Capsule().fill(deviceGreen))
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(HoverPressStyle(pressedScale: 0.95))
+                .accessibilityLabel("Conectar ao Spotify")
             }
         } else if let err = spotify.apiError {
-            Text(err).font(.system(size: 9.5)).foregroundColor(.orange.opacity(0.9))
+            StateView(kind: .failed(err), actionTitle: "Tentar de novo") {
+                Task { await spotify.refreshDevices() }
+            }
         } else if spotify.devices.isEmpty {
             Text("Nenhum dispositivo ativo. Abra o Spotify em algum aparelho.")
-                .font(.system(size: 9.5)).foregroundColor(.white.opacity(0.45))
+                .font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary)
         } else {
             ForEach(spotify.devices) { dev in
                 DeviceRow(icon: dev.icon, title: dev.name, subtitle: dev.isThisMac ? "Este Mac" : dev.type,
@@ -75,7 +83,8 @@ struct DevicePanelView: View {
 
     private func column<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title.uppercased()).font(.system(size: 8.5, weight: .bold)).foregroundColor(.white.opacity(0.3))
+            Text(title.uppercased()).font(NotchFont.caption.weight(.bold)).foregroundStyle(NotchTheme.textTertiary)
+                .accessibilityAddTraits(.isHeader)
             ScrollView(showsIndicators: false) { VStack(spacing: 2) { content() } }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -93,39 +102,53 @@ struct DeviceRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(active ? deviceGreen : .white.opacity(0.55)).frame(width: 18)
+                Image(systemName: icon).font(NotchFont.label.weight(.semibold))
+                    .foregroundStyle(active ? deviceGreen : NotchTheme.textSecondary).frame(width: 18)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(.system(size: 11, weight: active ? .bold : .medium))
-                        .foregroundColor(active ? deviceGreen : .white.opacity(0.9)).lineLimit(1)
-                    if let subtitle { Text(subtitle).font(.system(size: 8.5)).foregroundColor(.white.opacity(0.4)).lineLimit(1) }
+                    Text(title).font(NotchFont.label.weight(active ? .bold : .medium))
+                        .foregroundStyle(active ? deviceGreen : NotchTheme.textPrimary).lineLimit(1)
+                    if let subtitle { Text(subtitle).font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary).lineLimit(1) }
                 }
                 Spacer(minLength: 0)
-                if active { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundColor(deviceGreen) }
+                if active { Image(systemName: "checkmark").font(NotchFont.caption.weight(.bold)).foregroundStyle(deviceGreen) }
             }
-            .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hovering ? 0.08 : (active ? 0.05 : 0))))
+            .padding(.horizontal, NotchTheme.Spacing.s).padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.medium)
+                .fill(hovering ? NotchTheme.fillSelected : (active ? NotchTheme.fillSubtle : Color.clear)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .accessibilityLabel(title)
+        .accessibilityValue(active ? "Ativo" : "")
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }
 
 struct VolumeSlider: View {
     @Binding var value: Double   // 0...100
+    @State private var hovering = false
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.18)).frame(height: 4)
-                Capsule().fill(Color.white.opacity(0.9)).frame(width: max(0, geo.size.width * CGFloat(value / 100)), height: 4)
+                Capsule().fill(NotchTheme.fillSelected).frame(height: hovering ? 5 : 4)
+                Capsule().fill(NotchTheme.textPrimary.opacity(0.9))
+                    .frame(width: max(0, geo.size.width * CGFloat(value / 100)), height: hovering ? 5 : 4)
             }
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .motionAnimation(Motion.micro, value: hovering)
             .gesture(DragGesture(minimumDistance: 0).onChanged { g in
                 value = Double(min(1, max(0, g.location.x / geo.size.width))) * 100
             })
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Volume")
+        .accessibilityValue("\(Int(value)) por cento")
+        .accessibilityAdjustableAction { dir in
+            value = min(100, max(0, value + (dir == .increment ? 5 : -5)))
         }
     }
 }

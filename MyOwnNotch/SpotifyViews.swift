@@ -16,18 +16,23 @@ struct SpotifyPanelView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: NotchTheme.Spacing.s) {
+            HStack(spacing: NotchTheme.Spacing.s) {
                 Button(action: onClose) {
-                    Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold)).foregroundColor(.white.opacity(0.6))
+                    Image(systemName: "chevron.left").font(NotchFont.caption.weight(.bold)).foregroundStyle(NotchTheme.textTertiary)
                         .frame(width: 22, height: 20).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                Text(spotify.isConnected ? "Playing Next" : "Conectar ao Spotify")
-                    .font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
+                }
+                .buttonStyle(HoverPressStyle())
+                .accessibilityLabel("Voltar")
+                .help("Voltar")
+                Text(spotify.isConnected ? "A seguir" : "Conectar ao Spotify")
+                    .font(NotchFont.label.weight(.semibold)).foregroundStyle(NotchTheme.textSecondary)
                 Spacer()
                 if spotify.isConnected {
                     Button("Desconectar") { spotify.disconnect(); onClose() }
-                        .buttonStyle(.plain).font(.system(size: 9, weight: .medium)).foregroundColor(.white.opacity(0.35))
+                        .buttonStyle(HoverPressStyle(pressedScale: 0.95))
+                        .font(NotchFont.caption.weight(.medium)).foregroundStyle(NotchTheme.textTertiary)
+                        .accessibilityHint("Encerra a conexão com a conta do Spotify")
                 }
             }
             if spotify.isConnected { queueList } else { connectForm }
@@ -38,16 +43,14 @@ struct SpotifyPanelView: View {
     // MARK: Fila
 
     private var queueList: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: NotchTheme.Spacing.xs) {
             if let err = spotify.apiError {
-                VStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 14)).foregroundColor(.orange)
-                    Text(err).font(.system(size: 9.5)).foregroundColor(.orange.opacity(0.9)).multilineTextAlignment(.center)
+                StateView(kind: .failed(err), actionTitle: "Tentar de novo") {
+                    Task { await spotify.refreshQueue() }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if spotify.queue.isEmpty {
-                Text("A fila está vazia ou nenhum dispositivo do Spotify está ativo.")
-                    .font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+                StateView(kind: .failed("Fila vazia ou nenhum dispositivo ativo"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(showsIndicators: false) {
@@ -65,41 +68,44 @@ struct SpotifyPanelView: View {
     // MARK: Conexão
 
     private var connectForm: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: NotchTheme.Spacing.s) {
             Text("Para ver a fila e curtir faixas: crie um app em developer.spotify.com/dashboard, adicione o Redirect URI abaixo e cole o Client ID.")
-                .font(.system(size: 9.5)).foregroundColor(.white.opacity(0.5)).fixedSize(horizontal: false, vertical: true)
+                .font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary).fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 6) {
+            HStack(spacing: NotchTheme.Spacing.s) {
                 Text(SpotifyService.redirectURI)
-                    .font(.system(size: 10, design: .monospaced)).foregroundColor(.white.opacity(0.75)).textSelection(.enabled)
+                    .font(NotchFont.caption.monospaced()).foregroundStyle(NotchTheme.textSecondary).textSelection(.enabled)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(SpotifyService.redirectURI, forType: .string)
-                } label: { Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(.white.opacity(0.5)) }
-                .buttonStyle(.plain)
+                } label: { Image(systemName: "doc.on.doc").font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary) }
+                .buttonStyle(HoverPressStyle())
+                .accessibilityLabel("Copiar Redirect URI")
+                .help("Copiar Redirect URI")
                 Spacer()
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.06)))
+            .padding(.horizontal, NotchTheme.Spacing.m).padding(.vertical, NotchTheme.Spacing.xs)
+            .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.small).fill(NotchTheme.fillSubtle))
 
-            HStack(spacing: 6) {
+            HStack(spacing: NotchTheme.Spacing.s) {
                 TextField("Client ID", text: $spotify.clientID)
-                    .textFieldStyle(.plain).font(.system(size: 11, design: .monospaced)).foregroundColor(.white)
+                    .textFieldStyle(.plain).font(NotchFont.label.monospaced()).foregroundStyle(NotchTheme.textPrimary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.09)))
+                    .background(Capsule().fill(NotchTheme.fillSubtle))
                     .onSubmit { spotify.connect() }
+                    .accessibilityLabel("Client ID do Spotify")
                 Button { spotify.connect() } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: NotchTheme.Spacing.xs) {
                         if spotify.isConnecting { ProgressView().controlSize(.mini).scaleEffect(0.6) }
-                        Text(spotify.isConnecting ? "Aguardando…" : "Conectar").font(.system(size: 11, weight: .bold))
+                        Text(spotify.isConnecting ? "Aguardando…" : "Conectar").font(NotchFont.label.weight(.bold))
                     }
-                    .foregroundColor(.black).padding(.horizontal, 12).padding(.vertical, 5)
+                    .foregroundStyle(Color.black).padding(.horizontal, NotchTheme.Spacing.l).padding(.vertical, 5)
                     .background(Capsule().fill(spotifyGreen))
                 }
-                .buttonStyle(.plain).disabled(spotify.isConnecting)
+                .buttonStyle(HoverPressStyle(pressedScale: 0.95)).disabled(spotify.isConnecting)
             }
             if let err = spotify.errorMessage {
-                Text(err).font(.system(size: 10)).foregroundColor(.orange)
+                StateView(kind: .failed(err))
             }
         }
     }
@@ -112,23 +118,25 @@ struct QueueRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: NotchTheme.Spacing.m) {
                 AsyncImage(url: item.artworkURL) { img in img.resizable().aspectRatio(contentMode: .fill) }
-                    placeholder: { Color.white.opacity(0.1) }
+                    placeholder: { NotchTheme.fillSelected }
                     .frame(width: 28, height: 28)
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(item.name).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).lineLimit(1)
-                    Text(item.artist).font(.system(size: 9.5)).foregroundColor(.white.opacity(0.45)).lineLimit(1)
+                    Text(item.name).font(NotchFont.label.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary).lineLimit(1)
+                    Text(item.artist).font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary).lineLimit(1)
                 }
                 Spacer()
-                if hovering { Image(systemName: "play.fill").font(.system(size: 9)).foregroundColor(spotifyGreen) }
+                if hovering { Image(systemName: "play.fill").font(NotchFont.caption).foregroundStyle(spotifyGreen) }
             }
-            .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hovering ? 0.08 : 0)))
+            .padding(.horizontal, NotchTheme.Spacing.s).padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.medium).fill(hovering ? NotchTheme.fillSubtle : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .accessibilityLabel("\(item.name), \(item.artist)")
+        .accessibilityHint("Pula para esta faixa")
     }
 }

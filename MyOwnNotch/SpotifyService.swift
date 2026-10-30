@@ -135,12 +135,19 @@ final class SpotifyService: ObservableObject {
             conn.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
                 let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 let line = request.components(separatedBy: "\r\n").first ?? ""
-                let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
-                let ok = path.hasPrefix("/callback")
-                let body = "<html><head><meta charset='utf-8'><title>MyOwnNotch</title></head><body style='font-family:-apple-system;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><div style='text-align:center'><h2>\(ok ? "Conectado ✓" : "Ok")</h2><p style='color:#888'>Você já pode fechar esta aba e voltar ao notch.</p></div></body></html>"
-                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                let parts = line.split(separator: " ").map(String.init)
+                let method = parts.first ?? ""
+                let path = parts.count > 1 ? parts[1] : ""
+                let isCallback = method == "GET" && (path == "/callback" || path.hasPrefix("/callback?"))
+                let status = isCallback ? "200 OK" : "404 Not Found"
+                let body = isCallback
+                    ? "<html><head><meta charset='utf-8'><title>MyOwnNotch</title></head><body style='font-family:-apple-system;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><div style='text-align:center'><h2>Conectado ✓</h2><p style='color:#888'>Você já pode fechar esta aba e voltar ao notch.</p></div></body></html>"
+                    : "Not found"
+                let resp = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 conn.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in conn.cancel() })
-                if ok { Task { @MainActor in await self?.handleCallback(path: path) } }
+                if isCallback {
+                    Task { @MainActor [weak self] in await self?.handleCallback(path: path) }
+                }
             }
         }
         l.start(queue: .main)
@@ -151,10 +158,12 @@ final class SpotifyService: ObservableObject {
 
     private func handleCallback(path: String) async {
         guard let comps = URLComponents(string: "http://127.0.0.1" + path) else { return }
-        let items = Dictionary(uniqueKeysWithValues: (comps.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        let items = Dictionary((comps.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        // Callback com state diferente (ou ausente): ignora e mantém o listener ativo
+        guard isConnecting, !oauthState.isEmpty, items["state"] == oauthState else { return }
         stopListener()
         if let err = items["error"] { fail(err == "access_denied" ? "Acesso negado no Spotify." : "Erro do Spotify: \(err)"); return }
-        guard items["state"] == oauthState, let code = items["code"] else { fail("Resposta inválida do Spotify."); return }
+        guard let code = items["code"] else { fail("Resposta inválida do Spotify."); return }
 
         let ok = await tokenRequest([
             "grant_type": "authorization_code", "code": code,
@@ -322,10 +331,15 @@ enum Keychain {
     private static let service = "treenity.MyOwnNotch.spotify"
 
     static func set(_ account: String, _ value: String) {
-        delete(account)
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecValueData as String: Data(value.utf8)]
-        SecItemAdd(q as CFDictionary, nil)
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                   kSecAttrAccount as String: account]
+        let attrs: [String: Any] = [kSecValueData as String: Data(value.utf8),
+                                    kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var status = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(base.merging(attrs) { $1 } as CFDictionary, nil)
+        }
+        if status != errSecSuccess { NSLog("MyOwnNotch: falha ao gravar no Keychain (\(status))") }
     }
     static func get(_ account: String) -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,

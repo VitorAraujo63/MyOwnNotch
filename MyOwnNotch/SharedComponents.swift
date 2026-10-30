@@ -24,24 +24,38 @@ struct AudioBarsView: View {
             }
         }
         .frame(height: maxHeight)
-        .animation(.easeInOut(duration: 0.12), value: bars)
+        .motionAnimation(.easeInOut(duration: 0.12), value: bars)
     }
 }
 
 // MARK: - Marquee Text
 
+/// Texto que rola quando não cabe. Reinicia ao mudar o texto (`.id(text)`) e fica
+/// estático (truncado) com Reduce Motion.
 struct MarqueeText: View {
     let text: String
     let font: Font
     let color: Color
 
+    var body: some View {
+        MarqueeContent(text: text, font: font, color: color)
+            .id(text)
+    }
+}
+
+private struct MarqueeContent: View {
+    let text: String
+    let font: Font
+    let color: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var offset: CGFloat = 0
     @State private var textWidth: CGFloat = 0
-    @State private var isAnimating = false
+    @State private var scrollTask: Task<Void, Never>?
 
     var body: some View {
         GeometryReader { geo in
-            let needsScroll = textWidth > geo.size.width
+            let needsScroll = textWidth > geo.size.width && !reduceMotion
             ZStack(alignment: .leading) {
                 if needsScroll {
                     HStack(spacing: 30) {
@@ -49,18 +63,13 @@ struct MarqueeText: View {
                         Text(text).font(font).foregroundColor(color).fixedSize()
                     }
                     .offset(x: offset)
-                    .onAppear {
-                        guard !isAnimating else { return }
-                        isAnimating = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            withAnimation(.linear(duration: Double(textWidth + 30) / 30.0).repeatForever(autoreverses: false)) {
-                                offset = -(textWidth + 30)
-                            }
-                        }
+                    .onAppear(perform: startScrolling)
+                    .onDisappear {
+                        scrollTask?.cancel()
+                        withAnimation(.linear(duration: 0)) { offset = 0 }  // interrompe o repeatForever
                     }
-                    .onChange(of: text) { _ in offset = 0; isAnimating = false }
                 } else {
-                    Text(text).font(font).foregroundColor(color)
+                    Text(text).font(font).foregroundColor(color).lineLimit(1)
                 }
             }
             .clipped()
@@ -68,6 +77,17 @@ struct MarqueeText: View {
                 Text(text).font(font).fixedSize().hidden()
                     .background(GeometryReader { g in Color.clear.onAppear { textWidth = g.size.width } })
             )
+        }
+    }
+
+    private func startScrolling() {
+        scrollTask?.cancel()
+        scrollTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            withAnimation(.linear(duration: Double(textWidth + 30) / 30.0).repeatForever(autoreverses: false)) {
+                offset = -(textWidth + 30)
+            }
         }
     }
 }
@@ -88,12 +108,14 @@ struct GradientText: View {
 
 struct PulsatingCircle: View {
     let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scale: CGFloat = 1.0
     @State private var opacity: Double = 0.8
 
     var body: some View {
         Circle().fill(color).scaleEffect(scale).opacity(opacity)
             .onAppear {
+                guard !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
                     scale = 1.3; opacity = 0.3
                 }
@@ -107,9 +129,11 @@ struct WeatherCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: vm.weatherIcon).font(.system(size: 13)).foregroundColor(.yellow)
-            Text(vm.weatherTemp).font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
+            Image(systemName: vm.weatherIcon).symbolRenderingMode(.multicolor).font(.system(size: 13))
+            Text(vm.weatherTemp).font(NotchFont.body.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Clima: \(vm.weatherTemp), \(vm.weatherDesc)")
     }
 }
 
@@ -127,65 +151,141 @@ struct WeatherExpandedView: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            // Ícone + cidade
-            VStack(spacing: 6) {
-                Image(systemName: vm.weatherIcon)
-                    .symbolRenderingMode(.hierarchical)
-                    .font(.system(size: 42))
-                    .foregroundStyle(LinearGradient(colors: iconColors, startPoint: .top, endPoint: .bottom))
-                    .shadow(color: iconColors.last!.opacity(0.45), radius: 10, y: 3)
-                    .frame(height: 50)
-                HStack(spacing: 3) {
-                    Image(systemName: "location.fill").font(.system(size: 7))
-                    Text(vm.weatherLocationDisplay).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+        HStack(spacing: 10) {
+            Group {
+                if vm.weatherForecast.isEmpty && vm.weatherStatus == .loading {
+                    currentCard.shimmer()
+                } else {
+                    currentCard
                 }
-                .foregroundColor(.white.opacity(0.55))
             }
-            .frame(width: 96)
+            .frame(width: 168)
 
-            Rectangle().fill(Color.white.opacity(0.08)).frame(width: 0.5).padding(.vertical, 6)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(vm.weatherTemp)
-                        .font(.system(size: 36, weight: .light, design: .rounded))
-                        .foregroundColor(.white)
-                        .contentTransition(.numericText())
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(vm.weatherDesc)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.85))
-                            .lineLimit(1)
-                        HStack(spacing: 6) {
-                            Label(vm.weatherHigh, systemImage: "arrow.up")
-                            Label(vm.weatherLow, systemImage: "arrow.down")
-                        }
-                        .font(.system(size: 10, weight: .medium))
-                        .labelStyle(.titleAndIcon)
-                        .foregroundColor(.white.opacity(0.45))
-                    }
-                }
-
+            VStack(spacing: 8) {
                 HStack(spacing: 6) {
                     WeatherChip(icon: "thermometer.medium", text: vm.weatherFeelsLike, tint: .orange)
                     WeatherChip(icon: "humidity.fill", text: vm.weatherHumidity, tint: .cyan)
                     WeatherChip(icon: "wind", text: vm.weatherWind, tint: .mint)
+                    Spacer(minLength: 0)
                 }
 
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundColor(.white.opacity(0.45))
-                    TextField("Buscar CEP ou cidade", text: $vm.weatherSearchInput)
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .font(.system(size: 11))
-                        .foregroundColor(.white)
-                        .onSubmit { vm.fetchWeather(location: vm.weatherSearchInput) }
+                forecastArea
+                    .frame(maxHeight: .infinity)
+
+                if !vm.weatherForecast.isEmpty, needsRetry {
+                    StateView(kind: vm.weatherStatus, actionTitle: "Tentar de novo") { vm.fetchWeather() }
                 }
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
+
+                searchBar
+            }
+        }
+    }
+
+    private var needsRetry: Bool {
+        switch vm.weatherStatus {
+        case .offline, .failed: return true
+        default: return false
+        }
+    }
+
+    /// Previsão, skeleton (carregando) ou estado de erro com "Tentar de novo".
+    @ViewBuilder private var forecastArea: some View {
+        if !vm.weatherForecast.isEmpty {
+            HStack(spacing: NotchTheme.Spacing.m) {
+                ForEach(vm.weatherForecast) { ForecastCard(day: $0) }
+            }
+        } else if needsRetry || vm.weatherStatus == .noPermission {
+            StateView(kind: vm.weatherStatus, actionTitle: "Tentar de novo") { vm.fetchWeather() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HStack(spacing: NotchTheme.Spacing.m) {
+                ForEach(0..<3, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous)
+                        .fill(NotchTheme.fillSubtle)
+                }
+            }
+            .shimmer()
+        }
+    }
+
+    // Cartão principal: ícone, temperatura, condição e cidade
+    private var currentCard: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 3) {
+                    Image(systemName: "location.fill").font(.system(size: 7))
+                    Text(vm.weatherLocationDisplay).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                }
+                .foregroundStyle(NotchTheme.textTertiary)
+
+                Text(vm.weatherTemp)
+                    .font(NotchFont.display)
+                    .foregroundStyle(NotchTheme.textPrimary)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.7).lineLimit(1)
+
+                Text(vm.weatherDesc)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NotchTheme.textSecondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Label(vm.weatherHigh, systemImage: "arrow.up")
+                    Label(vm.weatherLow, systemImage: "arrow.down")
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(NotchTheme.textTertiary)
             }
             Spacer(minLength: 0)
+            Image(systemName: vm.weatherIcon)
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 34))
+                .foregroundStyle(LinearGradient(colors: iconColors, startPoint: .top, endPoint: .bottom))
+                .shadow(color: (iconColors.last ?? .gray).opacity(0.5), radius: 9, y: 3)
+                .frame(width: 40)
         }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous)
+                .fill(LinearGradient(colors: [(iconColors.last ?? .gray).opacity(0.22), Color.white.opacity(0.05)],
+                                     startPoint: .topTrailing, endPoint: .bottomLeading))
+        )
+    }
+
+    // Busca: botão discreto que vira campo de texto
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundStyle(NotchTheme.textTertiary)
+            TextField("Buscar CEP ou cidade", text: $vm.weatherSearchInput)
+                .textFieldStyle(PlainTextFieldStyle())
+                .font(NotchFont.label)
+                .accessibilityLabel("Buscar clima por CEP ou cidade")
+                .foregroundStyle(NotchTheme.textPrimary)
+                .onSubmit { vm.fetchWeather(location: vm.weatherSearchInput) }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Capsule().fill(NotchTheme.fillSubtle))
+    }
+}
+
+struct ForecastCard: View {
+    let day: WeatherDay
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(day.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(NotchTheme.textTertiary)
+            Image(systemName: day.icon)
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 17))
+                .frame(height: 20)
+            HStack(spacing: 4) {
+                Text(day.high).foregroundStyle(NotchTheme.textPrimary)
+                Text(day.low).foregroundStyle(NotchTheme.textTertiary)
+            }
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(NotchTheme.fillSubtle))
     }
 }
 
@@ -194,7 +294,7 @@ struct WeatherChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 9, weight: .semibold)).foregroundColor(tint)
-            Text(text).font(.system(size: 10, weight: .semibold, design: .rounded)).foregroundColor(.white.opacity(0.85))
+            Text(text).font(.system(size: 10, weight: .semibold, design: .rounded)).foregroundStyle(NotchTheme.textSecondary)
         }
         .padding(.horizontal, 7).padding(.vertical, 4)
         .background(Capsule().fill(tint.opacity(0.14)))
@@ -208,7 +308,7 @@ struct SystemCompactView: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "cpu").font(.system(size: 12)).foregroundColor(.cyan)
-            Text(String(format: "%.0f%%", vm.cpuUsage)).font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
+            Text(String(format: "%.0f%%", vm.cpuUsage)).font(.system(size: 12, weight: .semibold)).foregroundStyle(NotchTheme.textPrimary)
         }
     }
 }
@@ -231,7 +331,7 @@ struct SystemExpandedView: View {
             HStack(spacing: 8) {
                 Image(systemName: "internaldrive").font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.orange)
-                Text("Disco").font(.system(size: 10, weight: .semibold)).foregroundColor(.white.opacity(0.7))
+                Text("Disco").font(.system(size: 10, weight: .semibold)).foregroundStyle(NotchTheme.textSecondary)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.white.opacity(0.1))
@@ -243,7 +343,7 @@ struct SystemExpandedView: View {
                 .frame(height: 5)
                 Text(String(format: "%.0f / %.0f GB", vm.storageUsedGB, vm.storageTotalGB))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundStyle(NotchTheme.textTertiary)
                     .fixedSize()
             }
         }
@@ -271,7 +371,7 @@ struct SystemRingCard: View {
                     .animation(.spring(response: 0.6, dampingFraction: 0.8), value: value)
                 Text(String(format: "%.0f", value))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(NotchTheme.textPrimary)
                     .contentTransition(.numericText())
             }
             .frame(width: 46, height: 46)
@@ -279,7 +379,7 @@ struct SystemRingCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 3) {
                     Image(systemName: icon).font(.system(size: 8, weight: .bold)).foregroundColor(colors[0])
-                    Text(title).font(.system(size: 10, weight: .semibold)).foregroundColor(.white.opacity(0.75))
+                    Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(NotchTheme.textSecondary)
                         .lineLimit(1)
                 }
                 SparkLine(values: history, colors: colors)
@@ -288,7 +388,7 @@ struct SystemRingCard: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 8)
         .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous).fill(NotchTheme.fillSubtle))
     }
 }
 
@@ -343,11 +443,11 @@ struct SystemGaugeRow: View {
             HStack {
                 Label(title, systemImage: icon)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundStyle(NotchTheme.textSecondary)
                 Spacer()
                 Text(detailText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundStyle(NotchTheme.textTertiary)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -366,16 +466,16 @@ struct GaugeCircle: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                Circle().stroke(Color.white.opacity(0.06), lineWidth: 4)
+                Circle().stroke(NotchTheme.fillSubtle, lineWidth: 4)
                 Circle().trim(from: 0, to: value / 100.0)
                     .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(.spring(response: 0.6), value: value)
                 Text(String(format: "%.0f%%", value))
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundStyle(NotchTheme.textPrimary)
             }.frame(width: 54, height: 54)
-            Text(label).font(.system(size: 11, weight: .medium)).foregroundColor(.white.opacity(0.4))
+            Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(NotchTheme.textTertiary)
         }
     }
 }
@@ -388,9 +488,9 @@ struct ActionPill: View {
                 Image(systemName: icon).font(.system(size: 10, weight: .semibold))
                 Text(label).font(.system(size: 11, weight: .semibold))
             }
-            .foregroundColor(.white.opacity(0.6))
+            .foregroundStyle(NotchTheme.textTertiary)
             .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(Capsule().fill(Color.white.opacity(0.08)))
+            .background(Capsule().fill(NotchTheme.fillSubtle))
         }.buttonStyle(.plain)
     }
 }
@@ -399,17 +499,35 @@ struct ActionPill: View {
 
 struct VolumeCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
+
+    private var icon: String {
+        let v = vm.currentVolume
+        if vm.systemMuted || v == 0 { return "speaker.slash.fill" }
+        if v < 34 { return "speaker.wave.1.fill" }
+        if v < 67 { return "speaker.wave.2.fill" }
+        return "speaker.wave.3.fill"
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: vm.currentVolume == 0 ? "speaker.slash.fill" : (vm.currentVolume < 50 ? "speaker.wave.1.fill" : "speaker.wave.3.fill"))
-                .font(.system(size: 12)).foregroundColor(.white)
+        HStack(spacing: NotchTheme.Spacing.m) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(NotchTheme.textPrimary)
+                .frame(width: 18, alignment: .leading)
+                .contentTransition(.symbolEffect(.replace))
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.15))
-                    Capsule().fill(Color.white).frame(width: geo.size.width * CGFloat(vm.currentVolume) / 100.0)
+                    Capsule().fill(NotchTheme.fillSelected)
+                    Capsule().fill(NotchTheme.textPrimary)
+                        .frame(width: geo.size.width * CGFloat(vm.currentVolume) / 100.0)
                 }
-            }.frame(width: 60, height: 5)
+            }
+            .frame(width: 90, height: 5)
+            .motionAnimation(Motion.snappy, value: vm.currentVolume)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Volume")
+        .accessibilityValue(vm.systemMuted ? "Mudo" : "\(vm.currentVolume)%")
     }
 }
 
@@ -419,8 +537,8 @@ struct TerminalCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "terminal.fill").font(.system(size: 11)).foregroundColor(.green)
-            Text(">_").font(.system(size: 12, weight: .bold, design: .monospaced)).foregroundColor(.white)
+            Image(systemName: "terminal").font(.system(size: 12, weight: .semibold)).foregroundColor(.green)
+            Text("Terminal").font(NotchFont.body.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary)
         }
     }
 }
@@ -431,7 +549,7 @@ struct TerminalExpandedView: View {
         TerminalHostView(session: vm.terminal)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .padding(6)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+            .background(RoundedRectangle(cornerRadius: NotchTheme.Radius.medium, style: .continuous).fill(Color.white.opacity(0.05)))
     }
 }
 
@@ -464,13 +582,13 @@ struct CryptoRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 3) {
                     Image(systemName: "triangle.fill").font(.system(size: 5)).foregroundColor(color)
-                    Text(symbol).font(.system(size: 12, weight: .bold)).foregroundColor(.white)
+                    Text(symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(NotchTheme.textPrimary)
                 }
-                Text(name).font(.system(size: 9)).foregroundColor(.white.opacity(0.35))
+                Text(name).font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary)
             }.frame(width: 55, alignment: .leading)
             CryptoLineGraph(color: color, points: points).frame(height: 16)
             VStack(alignment: .trailing, spacing: 1) {
-                Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundColor(.white)
+                Text(value).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(NotchTheme.textPrimary)
                 Text(change).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundColor(color)
             }.frame(width: 120, alignment: .trailing).lineLimit(1).fixedSize(horizontal: true, vertical: false)
         }
@@ -482,7 +600,7 @@ struct CryptoCompactView: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "chart.line.uptrend.xyaxis").font(.system(size: 12)).foregroundColor(.green)
-            Text(vm.cryptoCoins.first?.price ?? "--").font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
+            Text(vm.cryptoCoins.first?.price ?? "--").font(.system(size: 12, weight: .semibold)).foregroundStyle(NotchTheme.textPrimary)
         }
     }
 }
@@ -490,12 +608,41 @@ struct CryptoCompactView: View {
 struct CryptoExpandedView: View {
     @EnvironmentObject var vm: NotchViewModel
 
+    /// Os preços ainda são o placeholder "..." do ViewModel.
+    private var hasData: Bool { vm.cryptoCoins.first?.price != "..." }
+
+    private var needsRetry: Bool {
+        switch vm.cryptoStatus {
+        case .offline, .failed: return true
+        default: return false
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(vm.cryptoCoins, id: \.symbol) { coin in
-                FinanceCard(coin: coin)
+        VStack(spacing: NotchTheme.Spacing.m) {
+            if !hasData && needsRetry {
+                StateView(kind: vm.cryptoStatus, actionTitle: "Tentar de novo") { vm.fetchCrypto() }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: NotchTheme.Spacing.m) {
+                    ForEach(vm.cryptoCoins, id: \.symbol) { coin in
+                        FinanceCard(coin: coin)
+                    }
+                }
+                .shimmerIf(!hasData && vm.cryptoStatus == .loading)
+
+                if hasData && needsRetry {
+                    StateView(kind: vm.cryptoStatus, actionTitle: "Tentar de novo") { vm.fetchCrypto() }
+                }
             }
         }
+    }
+}
+
+extension View {
+    /// Aplica o skeleton só quando `active`.
+    @ViewBuilder func shimmerIf(_ active: Bool) -> some View {
+        if active { shimmer() } else { self }
     }
 }
 
@@ -527,15 +674,15 @@ struct FinanceCard: View {
                     .frame(width: 18, height: 18)
                     .background(Circle().fill(LinearGradient(colors: [tint, tint.opacity(0.65)], startPoint: .top, endPoint: .bottom)))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(coin.symbol).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                    Text(coin.name).font(.system(size: 8, weight: .medium)).foregroundColor(.white.opacity(0.4))
+                    Text(coin.symbol).font(.system(size: 11, weight: .bold)).foregroundStyle(NotchTheme.textPrimary)
+                    Text(coin.name).font(NotchFont.caption.weight(.medium)).foregroundStyle(NotchTheme.textTertiary)
                 }
                 Spacer(minLength: 0)
             }
 
             Text(coin.price)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundStyle(NotchTheme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
@@ -555,7 +702,7 @@ struct FinanceCard: View {
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: NotchTheme.Radius.large, style: .continuous)
                 .fill(LinearGradient(colors: [tint.opacity(0.10), Color.white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing))
         )
     }
@@ -618,5 +765,28 @@ extension Color {
         default: (a, r, g, b) = (1, 1, 1, 0)
         }
         self.init(.sRGB, red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255, opacity: Double(a) / 255)
+    }
+}
+
+// MARK: - Automação negada
+
+/// Envolve conteúdo que depende de Automação (AppleScript). Se o macOS negou a permissão,
+/// mostra o estado com atalho para Ajustes do Sistema > Privacidade > Automação.
+struct AutomationGate<Content: View>: View {
+    @EnvironmentObject var vm: NotchViewModel
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if vm.automationDenied {
+            StateView(kind: .noPermission,
+                      message: "Automação negada. Libere em Privacidade > Automação.",
+                      actionTitle: "Abrir Ajustes do Sistema") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        } else {
+            content()
+        }
     }
 }

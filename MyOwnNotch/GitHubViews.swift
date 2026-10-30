@@ -19,18 +19,23 @@ private let ghGreens: [Color] = [
 
 struct GitHubCompactView: View {
     @EnvironmentObject var vm: NotchViewModel
+    var body: some View { GitHubCompactContent(github: vm.github) }
+}
+
+private struct GitHubCompactContent: View {
+    @ObservedObject var github: GitHubService
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(ghGreens[4])
-            if vm.github.hasUsername {
-                Text("\(vm.github.todayCount) hoje")
-                    .font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
-                Text("· \(vm.github.yearCount) em \(vm.github.yearLabel)")
-                    .font(.system(size: 11)).foregroundColor(.white.opacity(0.55))
+                .font(NotchFont.label.weight(.semibold))
+                .foregroundStyle(ghGreens[4])
+            if github.hasUsername {
+                Text("\(github.todayCount) hoje")
+                    .font(NotchFont.body.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary)
+                Text("· \(github.yearCount) em \(github.yearLabel)")
+                    .font(NotchFont.label).foregroundStyle(NotchTheme.textTertiary)
             } else {
-                Text("GitHub").font(.system(size: 12, weight: .semibold)).foregroundColor(.white)
+                Text("GitHub").font(NotchFont.body.weight(.semibold)).foregroundStyle(NotchTheme.textPrimary)
             }
         }
     }
@@ -40,28 +45,39 @@ struct GitHubCompactView: View {
 
 struct GitHubExpandedView: View {
     @EnvironmentObject var vm: NotchViewModel
+    var body: some View { GitHubExpandedContent(github: vm.github) }
+}
+
+private struct GitHubExpandedContent: View {
+    @ObservedObject var github: GitHubService
     @State private var input = ""
     @State private var editing = false
 
     var body: some View {
-        let gh = vm.github
+        let gh = github
         if !gh.hasUsername || editing {
             userForm
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: NotchTheme.Spacing.m) {
+                HStack(spacing: NotchTheme.Spacing.s) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10, weight: .semibold)).foregroundColor(ghGreens[4])
+                        .font(NotchFont.caption.weight(.semibold)).foregroundStyle(ghGreens[4])
+                        .accessibilityHidden(true)
                     Text("@\(gh.username)")
-                        .font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.8))
-                    if let err = gh.errorMessage {
-                        Text(err).font(.system(size: 9)).foregroundColor(.orange)
-                    }
+                        .font(NotchFont.label.weight(.semibold)).foregroundStyle(NotchTheme.textSecondary)
                     Spacer()
-                    pillButton(gh.isLoading ? "ellipsis" : "arrow.clockwise") { gh.refresh() }
-                    pillButton("pencil") { input = gh.username; editing = true }
+                    pillButton(gh.isLoading ? "ellipsis" : "arrow.clockwise", label: "Atualizar") { gh.refresh() }
+                        .disabled(gh.isLoading)
+                    pillButton("pencil", label: "Trocar usuário") { input = gh.username; editing = true }
                 }
 
+                if let err = gh.errorMessage, gh.days.isEmpty {
+                    StateView(kind: Self.kind(for: err), message: err, actionTitle: "Tentar de novo") { gh.refresh() }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                if let err = gh.errorMessage {
+                    StateView(kind: Self.kind(for: err), message: err)
+                }
                 HStack(alignment: .center, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         stat("\(gh.yearCount)", "em \(gh.yearLabel)", big: true)
@@ -72,9 +88,23 @@ struct GitHubExpandedView: View {
 
                     heatmap(gh.days)
                 }
+                .redacted(reason: gh.isLoading && gh.days.isEmpty ? .placeholder : [])
+                }
             }
         }
     }
+
+    private static func kind(for error: String) -> LoadState {
+        error.contains("conexão") ? .offline : .failed(error)
+    }
+
+    private static let dayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     // MARK: Heatmap
 
@@ -89,6 +119,7 @@ struct GitHubExpandedView: View {
                                 .fill(ghGreens[min(4, max(0, day.level))])
                                 .frame(width: 9, height: 9)
                                 .help("\(day.count) em \(day.date)")
+                                .accessibilityLabel("\(day.count) contribuições em \(day.date)")
                         } else {
                             Color.clear.frame(width: 9, height: 9)
                         }
@@ -102,10 +133,7 @@ struct GitHubExpandedView: View {
     /// Agrupa os dias em colunas de semana (domingo → sábado), como o GitHub.
     private static func weeks(from days: [GitHubDay], maxWeeks: Int) -> [[GitHubDay?]] {
         guard let first = days.first else { return [] }
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
+        let f = dayParser
         let cal = Calendar(identifier: .gregorian)
         let offset = f.date(from: first.date).map { cal.component(.weekday, from: $0) - 1 } ?? 0
         var cells: [GitHubDay?] = Array(repeating: nil, count: offset) + days.map { Optional($0) }
@@ -120,46 +148,54 @@ struct GitHubExpandedView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(value)
                 .font(.system(size: big ? 22 : 13, weight: .bold, design: .rounded))
-                .foregroundColor(big ? ghGreens[4] : .white)
-            Text(label).font(.system(size: 9)).foregroundColor(.white.opacity(0.5))
+                .foregroundStyle(big ? ghGreens[4] : NotchTheme.textPrimary)
+            Text(label).font(NotchFont.caption).foregroundStyle(NotchTheme.textTertiary)
         }
     }
 
-    private func pillButton(_ icon: String, action: @escaping () -> Void) -> some View {
+    private func pillButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
+                .font(NotchFont.caption.weight(.semibold))
+                .foregroundStyle(NotchTheme.textSecondary)
                 .frame(width: 22, height: 18)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
-        }.buttonStyle(.plain)
+                .background(Capsule().fill(NotchTheme.fillSubtle))
+        }
+        .buttonStyle(HoverPressStyle())
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private var userForm: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: NotchTheme.Spacing.m) {
             Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 20, weight: .light)).foregroundColor(ghGreens[4])
+                .font(.system(size: 20, weight: .light)).foregroundStyle(ghGreens[4])
+                .accessibilityHidden(true)
             Text("Seu usuário do GitHub")
-                .font(.system(size: 11, weight: .medium)).foregroundColor(.white.opacity(0.7))
-            HStack(spacing: 6) {
+                .font(NotchFont.label.weight(.medium)).foregroundStyle(NotchTheme.textSecondary)
+            HStack(spacing: NotchTheme.Spacing.s) {
                 TextField("username", text: $input)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .font(NotchFont.body)
+                    .foregroundStyle(NotchTheme.textPrimary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
+                    .background(Capsule().fill(NotchTheme.fillSelected))
                     .frame(width: 180)
                     .onSubmit(save)
+                    .accessibilityLabel("Usuário do GitHub")
                 ActionPill(icon: "checkmark", label: "Salvar", action: save)
+            }
+            if let err = github.errorMessage {
+                StateView(kind: Self.kind(for: err), message: err)
             }
         }
         .frame(maxWidth: .infinity)
-        .onAppear { input = vm.github.username }
+        .onAppear { input = github.username }
     }
 
     private func save() {
         guard !input.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        vm.github.setUsername(input)
+        github.setUsername(input)
         editing = false
     }
 }
