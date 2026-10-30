@@ -146,7 +146,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyWindowFrame(animated: Bool = false) {
-        updateHostingFrame()
+        defer { updateHostingFrame() }   // recentraliza DEPOIS de a janela mudar de tamanho
         guard let frame = windowFrame(), let window = notchWindow, window.frame != frame else { return }
         window.setFrame(frame, display: true, animate: false)
     }
@@ -190,11 +190,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hostingView.sizingOptions = []   // a janela dita o tamanho, não o conteúdo
         // O hosting view fica dentro de um container simples (autoresizing, sem constraints),
         // senão o SwiftUI tenta mexer no tamanho da janela durante o layout e o AppKit aborta.
-        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        let container = CenteringContainerView(frame: NSRect(origin: .zero, size: frame.size))
         container.wantsLayer = true
         container.layer?.masksToBounds = true
         hostingContainer = container
-        hostingView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        // Sem autoresizing: com o hosting view maior que a janela, o AppKit redistribui as margens
+        // de forma imprevisível ao encolher (a ilha ficava deslocada e cortada). O container
+        // recentraliza explicitamente a cada mudança de tamanho.
+        hostingView.autoresizingMask = []
+        container.onResize = { [weak self] in self?.updateHostingFrame() }
         container.addSubview(hostingView)
         updateHostingFrame()
 
@@ -458,5 +462,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if window.ignoresMouseEvents != shouldIgnore {
             window.ignoresMouseEvents = shouldIgnore
         }
+    }
+}
+
+
+/// Container da janela do notch: avisa quando muda de tamanho para o hosting view (de tamanho
+/// fixo) ser recentralizado e ancorado no topo.
+final class CenteringContainerView: NSView {
+    var onResize: (() -> Void)?
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        onResize?()
     }
 }
